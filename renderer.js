@@ -303,14 +303,15 @@ async function newNote() {
   const ti = $('title'); ti.focus(); ti.select();
 }
 async function newFolder() {
+  setView('notes');
   const dir = S.target || S.root; S.open.add(dir);
   const p = await api.createDir(dir); await refreshTree();
   const row = [...$('tree').children].find((r) => r.dataset.path === p);
   if (row) renameDir({ path: p, name: p.split(/[\\/]/).pop() }, row);
 }
 async function chooseVault() { const v = await api.chooseVault(); if (v) { S.tabs = []; S.active = null; S.target = null; S.open = new Set(); loadVault(v); } }
-function loadVault(v) { S.root = v.root; S.tree = v.tree; $('vault-name').textContent = v.root; render(); }
-function render() { renderTabs(); renderTree(); renderPane(); }
+function loadVault(v) { S.tasks = null; S.root = v.root; S.tree = v.tree; $('vault-name').textContent = v.root; render(); }
+function render() { setView('notes'); renderTabs(); renderTree(); renderPane(); }
 
 $('btn-new').onclick = newNote; $('btn-dir').onclick = newFolder; $('btn-vault').onclick = chooseVault;
 $('filter').oninput = (e) => { S.filter = e.target.value; renderTree(); };
@@ -328,3 +329,132 @@ window.addEventListener('beforeunload', () => S.tabs.forEach((t) => t.dirty && a
 
 document.execCommand('defaultParagraphSeparator', false, 'div');
 api.openVault().then((v) => { loadVault(v); const w = v.tree.find((n) => n.type === 'file'); if (w) openNote(w.path); });
+
+/* ---------- daily tasks ---------- */
+const PAL = ['#d62bd0', '#8b5cf6', '#22d3ee', '#fb7185', '#f59e0b', '#34d399'];
+const uid = () => Math.random().toString(36).slice(2, 9);
+const mv = (a, i, d) => { const j = i + d; if (j >= 0 && j < a.length) [a[i], a[j]] = [a[j], a[i]]; };
+let tSave = null;
+const tip = document.createElement('div'); tip.id = 't-tip'; tip.hidden = true; document.body.appendChild(tip);
+
+function setView(v) { S.view = v; document.body.classList.toggle('view-tasks', v === 'tasks'); $('btn-tasks').classList.toggle('on', v === 'tasks'); tip.hidden = true; }
+function tSaveNow() { clearTimeout(tSave); tSave = null; if (S.tasks) api.saveTasks(JSON.stringify(S.tasks, null, 1)); }
+function tChanged() { renderTasks(); clearTimeout(tSave); tSave = setTimeout(tSaveNow, 300); }
+window.addEventListener('beforeunload', () => { if (tSave) tSaveNow(); });
+
+async function showTasks() {
+  if (S.view === 'tasks') { render(); return; }
+  if (!S.tasks) {
+    try { S.tasks = JSON.parse(await api.loadTasks()); } catch { S.tasks = null; }
+    if (!S.tasks || !Array.isArray(S.tasks.categories)) S.tasks = { categories: [] };
+  }
+  setView('tasks'); renderTasks();
+}
+
+function ctxAt(e, items) {
+  const m = $('ctx'); m.innerHTML = '';
+  items.forEach((it) => {
+    const b = document.createElement('div');
+    if (!it) b.className = 'sp'; else { b.textContent = it[0]; if (it[2]) b.className = it[2]; b.onclick = () => { m.hidden = true; it[1](); }; }
+    m.appendChild(b);
+  });
+  m.style.left = Math.min(e.clientX, innerWidth - 190) + 'px'; m.style.top = Math.min(e.clientY, innerHeight - items.length * 30 - 20) + 'px'; m.hidden = false;
+}
+function inlineEdit(span, value, save) {
+  const i = document.createElement('input'); i.className = 't-edit'; i.value = value; span.replaceWith(i); i.focus(); i.select();
+  let done = false;
+  const fin = (ok) => { if (done) return; done = true; const v = i.value.trim(); if (ok && v && v !== value) save(v); else renderTasks(); };
+  i.onkeydown = (e) => { if (e.key === 'Enter') fin(true); if (e.key === 'Escape') fin(false); };
+  i.onblur = () => fin(true);
+}
+function showTip(row, text) {
+  tip.textContent = text; tip.hidden = false;
+  const r = row.getBoundingClientRect(); let x = r.right + 10;
+  if (x + tip.offsetWidth > innerWidth - 10) x = Math.max(10, r.left - tip.offsetWidth - 10);
+  tip.style.left = x + 'px'; tip.style.top = r.top + 'px';
+}
+function noteModal(t) {
+  const ov = document.createElement('div'); ov.className = 't-modal';
+  ov.innerHTML = `<div class="t-card"><h3>Note</h3><div class="t-for">${esc(t.text)}</div><textarea placeholder="Write a note for this task…">${esc(t.note || '')}</textarea>
+    <div class="t-actions">${t.note ? '<button data-a="del">Remove note</button>' : ''}<span></span><button data-a="x">Cancel</button><button class="primary" data-a="ok">Save</button></div></div>`;
+  const ta = ov.querySelector('textarea'), close = () => ov.remove();
+  const ok = () => { t.note = ta.value.trim(); close(); tChanged(); };
+  ov.onclick = (e) => { if (e.target === ov) close(); const a = e.target.dataset && e.target.dataset.a; if (a === 'x') close(); if (a === 'ok') ok(); if (a === 'del') { t.note = ''; close(); tChanged(); } };
+  ta.onkeydown = (e) => { if (e.key === 'Escape') close(); if (e.key === 'Enter' && e.ctrlKey) ok(); };
+  document.body.appendChild(ov); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+
+function renderTasks() {
+  tip.hidden = true;
+  const el = $('tasks'), T = S.tasks, old = el.querySelector('.t-board');
+  const sl = old ? old.scrollLeft : 0, st = old ? old.scrollTop : 0;
+  const all = T.categories.flatMap((c) => c.tasks), done = all.filter((t) => t.done).length, pct = all.length ? Math.round(done / all.length * 100) : 0;
+  const date = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  el.innerHTML = `<div class="t-head"><div><h1>Daily tasks</h1><div class="t-sub">${T.categories.length ? `${date} · ${done} of ${all.length} done` : 'Add a category to build your routine'}</div></div>
+    <div class="t-prog" title="${pct}%"><i style="width:${pct}%"></i></div><button id="t-reset">Uncheck all</button></div><div class="t-board"></div>`;
+  $('t-reset').onclick = () => { all.forEach((t) => { t.done = false; }); tChanged(); };
+  const board = el.querySelector('.t-board');
+  T.categories.forEach((c, ci) => board.appendChild(colEl(c, ci)));
+  board.appendChild(ghostCol());
+  board.scrollLeft = sl; board.scrollTop = st;
+  if (S.focusAdd) { const i = el.querySelector(`.t-add[data-cat="${S.focusAdd}"]`); if (i) i.focus(); S.focusAdd = null; }
+}
+
+function colEl(c, ci) {
+  const T = S.tasks, d = document.createElement('section'); d.className = 't-col'; d.style.setProperty('--c', PAL[c.color % PAL.length]);
+  const n = c.tasks.filter((t) => t.done).length, p = c.tasks.length ? n / c.tasks.length * 100 : 0;
+  d.innerHTML = `<header class="t-ch"><span class="t-name">${esc(c.name)}</span><span class="t-count">${n}/${c.tasks.length}</span><button class="t-more" title="Category options">⋯</button></header><div class="t-bar"><i style="width:${p}%"></i></div><div class="t-list"></div>`;
+  const catMenu = (e) => ctxAt(e, [
+    ['Rename', () => inlineEdit(d.querySelector('.t-name'), c.name, (v) => { c.name = v; tChanged(); })],
+    ['Change color', () => { c.color = (c.color + 1) % PAL.length; tChanged(); }],
+    ['Uncheck all', () => { c.tasks.forEach((t) => { t.done = false; }); tChanged(); }],
+    ci > 0 && ['Move left', () => { mv(T.categories, ci, -1); tChanged(); }],
+    ci < T.categories.length - 1 && ['Move right', () => { mv(T.categories, ci, 1); tChanged(); }],
+    null,
+    ['Delete category', () => { if (c.tasks.length && !confirm(`Delete "${c.name}" and its ${c.tasks.length} tasks?`)) return; T.categories.splice(ci, 1); tChanged(); }, 'danger'],
+  ].filter((x) => x !== false));
+  d.querySelector('.t-ch').oncontextmenu = (e) => { e.preventDefault(); catMenu(e); };
+  d.querySelector('.t-more').onclick = (e) => { e.stopPropagation(); catMenu(e); };
+
+  const list = d.querySelector('.t-list');
+  c.tasks.forEach((t, ti) => {
+    const r = document.createElement('div'); r.className = 't-row' + (t.done ? ' done' : '') + (t.note ? ' has-note' : '');
+    r.innerHTML = `<span class="t-box"></span><span class="t-text">${esc(t.text)}</span>`;
+    const rename = () => inlineEdit(r.querySelector('.t-text'), t.text, (v) => { t.text = v; tChanged(); });
+    r.querySelector('.t-box').onclick = () => { t.done = !t.done; tChanged(); };
+    r.querySelector('.t-text').ondblclick = rename;
+    if (t.note) { r.onmouseenter = () => showTip(r, t.note); r.onmouseleave = () => { tip.hidden = true; }; }
+    r.oncontextmenu = (e) => {
+      e.preventDefault(); tip.hidden = true;
+      ctxAt(e, [
+        [t.note ? 'Edit note' : 'Add note', () => noteModal(t)],
+        ['Rename', rename],
+        ti > 0 && ['Move up', () => { mv(c.tasks, ti, -1); tChanged(); }],
+        ti < c.tasks.length - 1 && ['Move down', () => { mv(c.tasks, ti, 1); tChanged(); }],
+        null,
+        ['Delete task', () => { c.tasks.splice(ti, 1); tChanged(); }, 'danger'],
+      ].filter((x) => x !== false));
+    };
+    list.appendChild(r);
+  });
+  const add = document.createElement('input'); add.className = 't-add'; add.placeholder = '+ Add task'; add.dataset.cat = c.id;
+  add.onkeydown = (e) => { if (e.key === 'Enter' && add.value.trim()) { c.tasks.push({ id: uid(), text: add.value.trim(), done: false, note: '' }); S.focusAdd = c.id; tChanged(); } };
+  d.appendChild(add);
+  return d;
+}
+
+function ghostCol() {
+  const g = document.createElement('button'); g.className = 't-ghost'; g.innerHTML = '<span>+</span> Add category';
+  g.onclick = () => {
+    const i = document.createElement('input'); i.className = 't-ghost-in'; i.placeholder = 'Category name'; g.replaceWith(i); i.focus();
+    let done = false;
+    const fin = (ok) => {
+      if (done) return; done = true; const v = i.value.trim();
+      if (ok && v) { const c = { id: uid(), name: v, color: S.tasks.categories.length % PAL.length, tasks: [] }; S.tasks.categories.push(c); S.focusAdd = c.id; tChanged(); } else renderTasks();
+    };
+    i.onkeydown = (e) => { if (e.key === 'Enter') fin(true); if (e.key === 'Escape') fin(false); };
+    i.onblur = () => fin(!!i.value.trim());
+  };
+  return g;
+}
+$('btn-tasks').onclick = showTasks;

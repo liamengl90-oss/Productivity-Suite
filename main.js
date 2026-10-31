@@ -73,6 +73,10 @@ ipcMain.handle('fs:move', (_, src, destDir) => {
 });
 ipcMain.handle('fs:trash', async (_, p) => { if (inside(p) && path.resolve(p) !== root) await shell.trashItem(path.resolve(p)); });
 
+const tasksFile = () => path.join(root, 'Daily Tasks.tasks.json');
+ipcMain.handle('tasks:load', () => { try { return fs.readFileSync(tasksFile(), 'utf8'); } catch { return ''; } });
+ipcMain.handle('tasks:save', (_, text) => { fs.writeFileSync(tasksFile(), text); });
+
 app.whenReady().then(() => {
   win = new BrowserWindow({
     width: 1280, height: 800, minWidth: 720, minHeight: 460,
