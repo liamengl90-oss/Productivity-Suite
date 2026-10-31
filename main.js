@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
@@ -45,14 +45,33 @@ ipcMain.handle('note:create', (_, dir) => {
   fs.writeFileSync(p, '');
   return p;
 });
-ipcMain.handle('note:rename', (_, p, name) => {
+const rename = (p, name, ext) => {
   const clean = name.replace(/[\\/:*?"<>|]/g, '').trim();
   if (!clean || !inside(p)) return p;
-  const np = path.join(path.dirname(p), clean + '.md');
+  const np = path.join(path.dirname(p), clean + ext);
   if (np === p || fs.existsSync(np)) return p;
   fs.renameSync(p, np);
   return np;
+};
+ipcMain.handle('note:rename', (_, p, name) => rename(p, name, '.md'));
+ipcMain.handle('dir:rename', (_, p, name) => rename(p, name, ''));
+ipcMain.handle('dir:create', (_, parent) => {
+  const d = parent && inside(parent) ? parent : root;
+  let n = 1, p;
+  do { p = path.join(d, n === 1 ? 'New folder' : `New folder ${n}`); n++; } while (fs.existsSync(p));
+  fs.mkdirSync(p);
+  return p;
 });
+ipcMain.handle('fs:move', (_, src, destDir) => {
+  if (!inside(src) || !inside(destDir)) return src;
+  const s = path.resolve(src), d = path.resolve(destDir);
+  if (s === root || d === s || d.startsWith(s + path.sep) || path.dirname(s) === d) return src;
+  const np = path.join(d, path.basename(s));
+  if (fs.existsSync(np)) return src;
+  fs.renameSync(s, np);
+  return np;
+});
+ipcMain.handle('fs:trash', async (_, p) => { if (inside(p) && path.resolve(p) !== root) await shell.trashItem(path.resolve(p)); });
 
 app.whenReady().then(() => {
   win = new BrowserWindow({

@@ -10,8 +10,9 @@
 <header class="top">
   <div class="brand"><span class="dot"></span>Signal Path</div>
   <div class="top-actions">
-    <button id="btn-new" title="New note (Ctrl+N)">New note</button>
-    <button id="btn-vault" title="Open folder (Ctrl+O)">Open folder</button>
+    <button id="btn-new" title="New note (Ctrl+N)">+ Note</button>
+    <button id="btn-dir" title="New folder (Ctrl+Shift+N)">+ Folder</button>
+    <button id="btn-vault" title="Open folder (Ctrl+O)">Open vault</button>
   </div>
   <div class="vault-name" id="vault-name"></div>
 </header>
@@ -26,11 +27,7 @@
     <div class="pane" id="pane"></div>
   </main>
 </div>
-<footer class="status">
-  <span id="st-state">Ready</span>
-  <span id="st-words"></span>
-  <span id="st-mode"></span>
-</footer>
+<div id="ctx" class="ctx" hidden></div>
 <script src="renderer.js"></script>
 </body>
 </html>
