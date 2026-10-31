@@ -1,0 +1,20 @@
+{
+  "name": "signal-path",
+  "version": "0.1.0",
+  "description": "Local-first notes and planning suite",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "local.signalpath.app",
+    "productName": "Signal Path",
+    "files": ["main.js", "preload.js", "index.html", "styles.css", "renderer.js"],
+    "win": { "target": "portable" }
+  }
+}

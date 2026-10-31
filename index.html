@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+<title>Signal Path</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="dot"></span>Signal Path</div>
+  <div class="top-actions">
+    <button id="btn-new" title="New note (Ctrl+N)">New note</button>
+    <button id="btn-vault" title="Open folder (Ctrl+O)">Open folder</button>
+  </div>
+  <div class="vault-name" id="vault-name"></div>
+</header>
+<div class="body">
+  <aside class="side">
+    <div class="side-tabs"><span class="on">Library</span></div>
+    <input id="filter" class="filter" placeholder="Search notes" autocomplete="off">
+    <div id="tree" class="tree"></div>
+  </aside>
+  <main class="main">
+    <div class="tabs" id="tabs"></div>
+    <div class="pane" id="pane"></div>
+  </main>
+</div>
+<footer class="status">
+  <span id="st-state">Ready</span>
+  <span id="st-words"></span>
+  <span id="st-mode"></span>
+</footer>
+<script src="renderer.js"></script>
+</body>
+</html>
