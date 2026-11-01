@@ -77,6 +77,10 @@ const tasksFile = () => path.join(root, 'Daily Tasks.tasks.json');
 ipcMain.handle('tasks:load', () => { try { return fs.readFileSync(tasksFile(), 'utf8'); } catch { return ''; } });
 ipcMain.handle('tasks:save', (_, text) => { fs.writeFileSync(tasksFile(), text); });
 
+const dataFile = (n) => path.join(root, path.basename(String(n)));
+ipcMain.handle('data:load', (_, n) => { try { return fs.readFileSync(dataFile(n), 'utf8'); } catch { return ''; } });
+ipcMain.handle('data:save', (_, n, text) => { if (/\.json$/i.test(String(n))) fs.writeFileSync(dataFile(n), text); });
+
 app.whenReady().then(() => {
   win = new BrowserWindow({
     width: 1280, height: 800, minWidth: 720, minHeight: 460,

@@ -5,4 +5,5 @@ contextBridge.exposeInMainWorld('api', {
   read: call('note:read'), write: call('note:write'), create: call('note:create'), rename: call('note:rename'),
   createDir: call('dir:create'), renameDir: call('dir:rename'), move: call('fs:move'), trash: call('fs:trash'),
   loadTasks: call('tasks:load'), saveTasks: call('tasks:save'),
+  loadData: call('data:load'), saveData: call('data:save'),
 });
