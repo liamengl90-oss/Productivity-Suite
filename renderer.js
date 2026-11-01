@@ -310,7 +310,7 @@ async function newFolder() {
   if (row) renameDir({ path: p, name: p.split(/[\\/]/).pop() }, row);
 }
 async function chooseVault() { const v = await api.chooseVault(); if (v) { S.tabs = []; S.active = null; S.target = null; S.open = new Set(); loadVault(v); } }
-function loadVault(v) { S.tasks = null; S.gantt = null; S.root = v.root; S.tree = v.tree; $('vault-name').textContent = v.root; render(); }
+function loadVault(v) { S.tasks = null; S.gantt = null; P.loaded = false; S.root = v.root; S.tree = v.tree; $('vault-name').textContent = v.root; render(); }
 function render() { setView('notes'); renderTabs(); renderTree(); renderPane(); }
 
 $('btn-new').onclick = newNote; $('btn-dir').onclick = newFolder; $('btn-vault').onclick = chooseVault;
@@ -337,7 +337,7 @@ const mv = (a, i, d) => { const j = i + d; if (j >= 0 && j < a.length) [a[i], a[
 let tSave = null;
 const tip = document.createElement('div'); tip.id = 't-tip'; tip.hidden = true; document.body.appendChild(tip);
 
-function setView(v) { S.view = v; document.body.classList.toggle('view-tasks', v === 'tasks'); document.body.classList.toggle('view-gantt', v === 'gantt'); $('btn-tasks').classList.toggle('on', v === 'tasks'); $('btn-gantt').classList.toggle('on', v === 'gantt'); tip.hidden = true; }
+function setView(v) { S.view = v; document.body.classList.toggle('view-tasks', v === 'tasks'); document.body.classList.toggle('view-gantt', v === 'gantt'); $('btn-tasks').classList.toggle('on', v === 'tasks'); $('btn-gantt').classList.toggle('on', v === 'gantt'); document.body.classList.toggle('view-pomo', v === 'pomo'); $('btn-pomo').classList.toggle('on', v === 'pomo'); tip.hidden = true; }
 function tSaveNow() { clearTimeout(tSave); tSave = null; if (S.tasks) api.saveTasks(JSON.stringify(S.tasks, null, 1)); }
 function tChanged() { renderTasks(); clearTimeout(tSave); tSave = setTimeout(tSaveNow, 300); }
 window.addEventListener('beforeunload', () => { if (tSave) tSaveNow(); });
@@ -737,3 +737,154 @@ document.addEventListener('mouseup', () => {
   if (k.moved) { renderGantt(); clearTimeout(G.save); G.save = setTimeout(gSaveNow, 300); }
 });
 $('btn-gantt').onclick = showGantt;
+
+/* ---------- pomodoro ---------- */
+const P = {
+  cfg: { focus: 25, short: 5, long: 15, rounds: 4, autoBreak: true, autoFocus: false, sound: true, notify: true },
+  mode: 'focus', total: 1500, left: 1500, running: false, endAt: 0, round: 1, task: '', stats: {},
+  tick: null, loaded: false, lit: -1, save: null,
+};
+const LIM = { focus: [1, 120], short: [1, 60], long: [1, 90], rounds: [2, 12] };
+const MODES = { focus: 'Focus', short: 'Short break', long: 'Long break' };
+const CIRC = 2 * Math.PI * 148;
+const mmss = (s) => `${pad2(Math.floor(s / 60))}:${pad2(s % 60)}`;
+const pk = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const pSaveSoon = () => { clearTimeout(P.save); P.save = setTimeout(() => api.saveData('Pomodoro.pomo.json', JSON.stringify({ cfg: P.cfg, stats: P.stats })), 400); };
+
+async function showPomo() {
+  if (S.view === 'pomo') { render(); return; }
+  if (!P.loaded) {
+    try { const d = JSON.parse(await api.loadData('Pomodoro.pomo.json')); Object.assign(P.cfg, d.cfg || {}); P.stats = d.stats || {}; } catch { /* first run */ }
+    P.loaded = true;
+    if (!P.running && P.left === P.total) { P.total = P.left = P.cfg[P.mode] * 60; }
+  }
+  setView('pomo'); renderPomo();
+}
+
+function chime() {
+  if (!P.cfg.sound) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)(), t0 = ctx.currentTime;
+    [[659.25, 0], [783.99, 0.2], [1046.5, 0.4]].forEach(([f, t]) => {
+      const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0, t0 + t); g.gain.linearRampToValueAtTime(0.18, t0 + t + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t0 + t + 1.3);
+      o.connect(g); g.connect(ctx.destination); o.start(t0 + t); o.stop(t0 + t + 1.4);
+    });
+    setTimeout(() => ctx.close(), 2500);
+  } catch { /* no audio */ }
+}
+function notify(title, body) { if (P.cfg.notify && 'Notification' in window) { try { new Notification(title, { body, silent: true }); } catch { /* ignore */ } } }
+
+function start() {
+  if (P.running) return;
+  if (P.left <= 0) P.left = P.total;
+  P.running = true; P.endAt = Date.now() + P.left * 1000;
+  clearInterval(P.tick); P.tick = setInterval(ptick, 250); renderPomo();
+}
+function pause() {
+  if (!P.running) return;
+  P.left = Math.max(0, Math.ceil((P.endAt - Date.now()) / 1000)); clearInterval(P.tick); P.running = false; renderPomo();
+}
+function resetT() { clearInterval(P.tick); P.running = false; P.left = P.total; renderPomo(); }
+function ptick() {
+  P.left = Math.max(0, Math.ceil((P.endAt - Date.now()) / 1000));
+  if (P.left <= 0) finish(); else updPomo();
+}
+function finish() {
+  clearInterval(P.tick); P.running = false; chime();
+  if (P.mode === 'focus') notify('Focus complete', P.round >= P.cfg.rounds ? 'Great work. Time for a long break.' : 'Nice one. Take a short break.');
+  else notify('Break over', 'Ready to focus?');
+  advance(true);
+}
+function setMode(m, auto) {
+  clearInterval(P.tick); P.running = false; P.mode = m; P.total = P.left = P.cfg[m] * 60;
+  renderPomo(); if (auto) start();
+}
+function advance(record) {
+  const wasFocus = P.mode === 'focus';
+  if (wasFocus && record) { const k = pk(new Date()), s = P.stats[k] || (P.stats[k] = { n: 0, min: 0 }); s.n++; s.min += P.cfg.focus; pSaveSoon(); }
+  let next;
+  if (wasFocus) next = P.round >= P.cfg.rounds ? 'long' : 'short';
+  else { P.round = P.mode === 'long' ? 1 : P.round + 1; next = 'focus'; }
+  setMode(next, record && (wasFocus ? P.cfg.autoBreak : P.cfg.autoFocus));
+}
+
+const ICON = {
+  play: '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>',
+  reset: '<svg viewBox="0 0 24 24"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>',
+  skip: '<svg viewBox="0 0 24 24"><path d="M6 6l8.5 6L6 18zM16 6h2v12h-2z"/></svg>',
+};
+
+function renderPomo() {
+  const el = $('pomo'), c = P.cfg; el.dataset.mode = P.mode; P.lit = -1;
+  const today = pk(new Date()), st = P.stats[today] || { n: 0, min: 0 };
+  const done = P.mode === 'focus' ? P.round - 1 : P.round;
+  const dots = Array.from({ length: c.rounds }, (_, i) => `<i class="p-dot${i < done ? ' on' : ''}${P.mode === 'focus' && i === P.round - 1 ? ' cur' : ''}"></i>`).join('');
+  let ticks = '';
+  for (let i = 0; i < 60; i++) {
+    const a = (i * 6 - 90) * Math.PI / 180, r1 = i % 5 === 0 ? 166 : 171, r2 = 187;
+    ticks += `<line class="p-tk${i % 5 === 0 ? ' m' : ''}" x1="${(200 + r1 * Math.cos(a)).toFixed(1)}" y1="${(200 + r1 * Math.sin(a)).toFixed(1)}" x2="${(200 + r2 * Math.cos(a)).toFixed(1)}" y2="${(200 + r2 * Math.sin(a)).toFixed(1)}"/>`;
+  }
+  const step = (k, label, unit) => `<div class="p-row"><span>${label}</span><div class="p-step"><button data-k="${k}" data-d="-1">−</button><b>${c[k]}${unit}</b><button data-k="${k}" data-d="1">+</button></div></div>`;
+  const sw = (k, label) => `<div class="p-row"><span>${label}</span><button class="p-sw${c[k] ? ' on' : ''}" data-t="${k}"><i></i></button></div>`;
+  const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - (6 - i)); return { d, n: (P.stats[pk(d)] || { n: 0 }).n }; });
+  const mx = Math.max(1, ...days.map((x) => x.n));
+  const week = days.map((x, i) => `<div class="p-col"><i class="p-bar${x.n ? '' : ' empty'}${i === 6 ? ' today' : ''}" style="height:${x.n ? Math.max(6, x.n / mx * 52) : 3}px" title="${x.n} session${x.n === 1 ? '' : 's'}"></i><small>${'SMTWTFS'[x.d.getDay()]}</small></div>`).join('');
+  el.innerHTML = `
+    <div class="t-head"><div><h1>Pomodoro</h1><div class="t-sub">Today · ${st.n} session${st.n === 1 ? '' : 's'} · ${st.min} min of focus</div></div></div>
+    <div class="p-wrap">
+      <div class="p-stage">
+        <div class="seg p-modes">${Object.entries(MODES).map(([m, l]) => `<button data-m="${m}" class="${P.mode === m ? 'on' : ''}">${l}</button>`).join('')}</div>
+        <div class="p-ring">
+          <svg viewBox="0 0 400 400"><defs><linearGradient id="pg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" style="stop-color:var(--pa)"/><stop offset="1" style="stop-color:var(--pb)"/></linearGradient></defs>
+            <circle class="p-inner" cx="200" cy="200" r="124"/>${ticks}
+            <circle class="p-track" cx="200" cy="200" r="148"/>
+            <circle class="p-prog" id="p-prog" cx="200" cy="200" r="148" stroke-dasharray="${CIRC}" stroke-dashoffset="${CIRC}"/></svg>
+          <div class="p-center"><div class="p-lab">${MODES[P.mode]}</div><div class="p-time" id="p-time">${mmss(P.left)}</div><div class="p-dots">${dots}</div></div>
+        </div>
+        <div class="p-ctrl"><button class="p-btn" id="p-reset" title="Reset">${ICON.reset}</button><button class="p-go" id="p-go" title="Start / pause (Space)">${P.running ? ICON.pause : ICON.play}</button><button class="p-btn" id="p-skip" title="Skip to next">${ICON.skip}</button></div>
+        <input class="p-task" placeholder="What are you focusing on?" value="${esc(P.task).replace(/"/g, '&quot;')}" spellcheck="false">
+      </div>
+      <aside class="p-side">
+        <div class="p-card"><h3>Timer</h3>${step('focus', 'Focus', ' min')}${step('short', 'Short break', ' min')}${step('long', 'Long break', ' min')}${step('rounds', 'Rounds before long break', '')}</div>
+        <div class="p-card"><h3>Automation &amp; alerts</h3>${sw('autoBreak', 'Auto-start breaks')}${sw('autoFocus', 'Auto-start focus')}${sw('sound', 'Chime when done')}${sw('notify', 'Desktop notification')}</div>
+        <div class="p-card"><h3>Your focus</h3><div class="p-stats"><div class="p-stat"><b>${st.n}</b><small>sessions today</small></div><div class="p-stat"><b>${st.min}</b><small>minutes today</small></div></div><div class="p-week">${week}</div></div>
+      </aside>
+    </div>`;
+  updPomo();
+}
+
+function updPomo() {
+  const t = $('p-time'), frac = P.total ? 1 - P.left / P.total : 0;
+  if (t) {
+    t.textContent = mmss(P.left);
+    $('p-prog').style.strokeDashoffset = CIRC * (1 - frac);
+    const n = Math.floor(frac * 60);
+    if (n !== P.lit) { P.lit = n; $('pomo').querySelectorAll('.p-tk').forEach((k, i) => k.classList.toggle('on', i < n)); }
+  }
+  $('btn-pomo').textContent = P.running ? `● ${mmss(P.left)}` : 'Pomodoro';
+  document.title = P.running ? `${mmss(P.left)} · ${MODES[P.mode]}` : 'Signal Path';
+}
+
+$('pomo').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.m) setMode(b.dataset.m, false);
+  else if (b.dataset.k) {
+    const k = b.dataset.k, [lo, hi] = LIM[k];
+    P.cfg[k] = Math.max(lo, Math.min(hi, P.cfg[k] + +b.dataset.d));
+    if (!P.running && P.left === P.total) P.total = P.left = P.cfg[P.mode] * 60;
+    if (k === 'rounds') P.round = Math.min(P.round, P.cfg.rounds);
+    pSaveSoon(); renderPomo();
+  } else if (b.dataset.t) { const k = b.dataset.t; P.cfg[k] = !P.cfg[k]; if (k === 'sound' && P.cfg.sound) chime(); pSaveSoon(); renderPomo(); }
+  else if (b.id === 'p-go') { if (P.running) pause(); else start(); }
+  else if (b.id === 'p-reset') resetT();
+  else if (b.id === 'p-skip') advance(false);
+});
+$('pomo').addEventListener('input', (e) => { if (e.target.classList.contains('p-task')) P.task = e.target.value; });
+document.addEventListener('keydown', (e) => {
+  if (S.view !== 'pomo' || e.code !== 'Space' || /INPUT|TEXTAREA|BUTTON|SELECT/.test(e.target.tagName)) return;
+  e.preventDefault(); if (P.running) pause(); else start();
+});
+window.addEventListener('beforeunload', () => { if (P.save) { clearTimeout(P.save); api.saveData('Pomodoro.pomo.json', JSON.stringify({ cfg: P.cfg, stats: P.stats })); } });
+$('btn-pomo').onclick = showPomo;
