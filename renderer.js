@@ -161,7 +161,11 @@ function renameDir(n, row) {
 
 /* ---------- tabs + notes ---------- */
 async function openNote(path) {
-  if (!S.tabs.find((t) => t.path === path)) S.tabs.push({ path, name: baseName(path), text: await api.read(path), dirty: false });
+  if (!S.tabs.find((t) => t.path === path)) {
+    const text = await api.read(path);
+    if (/^---\r?\n[\s\S]*?\btype: health\b[\s\S]*?\r?\n---/.test(text)) { const y = (text.match(/\nyear: (\d{4})/) || [])[1]; showHealth(y ? +y : null, true); return; }
+    S.tabs.push({ path, name: baseName(path), text, dirty: false });
+  }
   S.active = path; S.target = dirOf(path); render();
 }
 function closeTab(path) {
@@ -337,7 +341,7 @@ const mv = (a, i, d) => { const j = i + d; if (j >= 0 && j < a.length) [a[i], a[
 let tSave = null;
 const tip = document.createElement('div'); tip.id = 't-tip'; tip.hidden = true; document.body.appendChild(tip);
 
-function setView(v) { S.view = v; document.body.classList.toggle('view-tasks', v === 'tasks'); document.body.classList.toggle('view-gantt', v === 'gantt'); $('btn-tasks').classList.toggle('on', v === 'tasks'); $('btn-gantt').classList.toggle('on', v === 'gantt'); document.body.classList.toggle('view-pomo', v === 'pomo'); $('btn-pomo').classList.toggle('on', v === 'pomo'); tip.hidden = true; }
+function setView(v) { S.view = v; document.body.classList.toggle('view-tasks', v === 'tasks'); document.body.classList.toggle('view-gantt', v === 'gantt'); $('btn-tasks').classList.toggle('on', v === 'tasks'); $('btn-gantt').classList.toggle('on', v === 'gantt'); document.body.classList.toggle('view-pomo', v === 'pomo'); $('btn-pomo').classList.toggle('on', v === 'pomo'); document.body.classList.toggle('view-health', v === 'health'); $('btn-health').classList.toggle('on', v === 'health'); tip.hidden = true; }
 function tSaveNow() { clearTimeout(tSave); tSave = null; if (S.tasks) api.saveTasks(JSON.stringify(S.tasks, null, 1)); }
 function tChanged() { renderTasks(); clearTimeout(tSave); tSave = setTimeout(tSaveNow, 300); }
 window.addEventListener('beforeunload', () => { if (tSave) tSaveNow(); });
@@ -888,3 +892,313 @@ document.addEventListener('keydown', (e) => {
 });
 window.addEventListener('beforeunload', () => { if (P.save) { clearTimeout(P.save); api.saveData('Pomodoro.pomo.json', JSON.stringify({ cfg: P.cfg, stats: P.stats })); } });
 $('btn-pomo').onclick = showPomo;
+
+
+/* ---------- health ---------- */
+/* health:data:start */
+const HK = [
+  { k: 'weight', name: 'Weight', color: '#22d3ee', dur: false },
+  { k: 'cal', name: 'Calories', color: '#f59e0b', dur: false },
+  { k: 'pro', name: 'Protein', color: '#d62bd0', dur: false },
+  { k: 'card', name: 'Cardio', color: '#34d399', dur: true },
+  { k: 'sleep', name: 'Sleep', color: '#8b5cf6', dur: true },
+  { k: 'steps', name: 'Steps', color: '#fb7185', dur: false },
+];
+const HD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DK = ['weight', 'cal', 'pro', 'card', 'sleep'];
+const OK = ['weight', 'cal', 'pro', 'card', 'steps', 'sleep'];
+const DUR = new Set(['card', 'sleep']);
+const H = { year: new Date().getFullYear(), w: [], meat: [], sel: 0, range: 'all', show: { weight: true, cal: true }, saveT: null, created: false, loaded: false, geo: null };
+const mon = (n) => new Date(n * 864e5).toLocaleDateString('en', { month: 'short', timeZone: 'UTC' });
+const dayLbl = (n) => `${mon(n)} ${new Date(n * 864e5).getUTCDate()}`;
+const fmtDur = (m) => { if (m == null) return ''; m = Math.round(m); const h = Math.floor(m / 60), r = m % 60; return h ? (r ? `${h}h ${r}m` : `${h}h`) : `${r}m`; };
+function parseDur(s) {
+  s = String(s == null ? '' : s).trim().toLowerCase(); if (!s) return null; let m;
+  if ((m = s.match(/^(\d+(?:\.\d+)?)\s*h(?:ours?|rs?)?\s*(?:(\d+)\s*m?(?:in)?)?$/))) return Math.round(+m[1] * 60 + (+m[2] || 0));
+  if ((m = s.match(/^(\d+):(\d{1,2})$/))) return +m[1] * 60 + +m[2];
+  if ((m = s.match(/^(\d+(?:\.\d+)?)\s*m(?:ins?)?$/))) return Math.round(+m[1]);
+  if (/^\d+(?:\.\d+)?$/.test(s)) return Math.round(+s);
+  return null;
+}
+const parseNum = (s) => { const v = parseFloat(String(s == null ? '' : s).replace(/,/g, '')); return Number.isFinite(v) ? v : null; };
+const rd = (k, s) => (DUR.has(k) ? parseDur(s) : parseNum(s));
+const inStr = (k, v) => (v == null ? '' : DUR.has(k) ? fmtDur(v) : String(v));
+const cell = (k, v, round) => (v == null ? '' : DUR.has(k) ? fmtDur(v) : k === 'weight' ? String(round ? Math.round(v * 10) / 10 : v) : String(round ? Math.round(v) : v));
+const fmtVal = (k, v) => (v == null ? '' : DUR.has(k) ? fmtDur(v) : k === 'weight' ? v.toFixed(1) : String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ','));
+const pipe = (s) => String(s || '').replace(/\|/g, '/').replace(/\r?\n/g, ' ');
+const sum = (a) => a.reduce((x, y) => x + y, 0);
+const avgOf = (a) => (a.length ? sum(a) / a.length : null);
+const vals = (w, k) => w.days.map((d) => d[k]).filter((v) => v != null);
+
+function genWeeks(year) {
+  const j1 = dn(`${year}-01-01`), j31 = dn(`${year}-12-31`), s0 = j1 - ((j1 + 3) % 7), out = [];
+  for (let s = s0, i = 1; s <= j31; s += 7, i++) {
+    const ms = [...new Set(Array.from({ length: 7 }, (_, d) => mon(s + d)))];
+    out.push({ n: i, start: s, months: ms.join(' · '), mid: mon(s + 3), days: Array.from({ length: 7 }, () => ({})), ov: {} });
+  }
+  return out;
+}
+function toMdH() {
+  let o = `---\ntype: health\nyear: ${H.year}\n---\n# Health ${H.year}\n\nWeight in lb. Cardio and sleep are shown as hours and minutes. Weeks run Monday to Sunday, and week 1 is the week that contains 1 January.\n\n## Year overview\n| Week | Dates | Months | Weight | Calories | Protein | Cardio | Steps | Sleep |\n|---|---|---|---|---|---|---|---|---|\n`;
+  H.w.forEach((w) => { o += `| ${w.n} | ${dayLbl(w.start)} – ${dayLbl(w.start + 6)} | ${w.months} | ${OK.map((k) => cell(k, w.ov[k])).join(' | ')} |\n`; });
+  o += '\n## Meat schedule\n| Day | Meat | Notes |\n|---|---|---|\n';
+  H.meat.forEach((m, i) => { o += `| ${HD[i]} | ${pipe(m.meat)} | ${pipe(m.notes)} |\n`; });
+  const logged = H.w.filter((w) => w.days.some((d) => DK.some((k) => d[k] != null)));
+  if (logged.length) {
+    o += '\n## Daily logs\n';
+    logged.forEach((w) => {
+      o += `\n### Week ${w.n} · ${dayLbl(w.start)} – ${dayLbl(w.start + 6)}\n| Day | Weight | Calories | Protein | Cardio | Sleep |\n|---|---|---|---|---|---|\n`;
+      w.days.forEach((d, i) => { o += `| ${HD[i]} | ${DK.map((k) => cell(k, d[k])).join(' | ')} |\n`; });
+      o += `| **Average** | ${DK.map((k) => cell(k, avgOf(vals(w, k)), true)).join(' | ')} |\n`;
+      o += `| **Total** | ${DK.map((k) => (k === 'weight' ? '' : cell(k, vals(w, k).length ? sum(vals(w, k)) : null))).join(' | ')} |\n`;
+    });
+  }
+  return o;
+}
+function fromMdH(text) {
+  let sec = '', wk = null;
+  const cells = (l) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim().replace(/\*\*/g, ''));
+  for (const l of text.split(/\r?\n/)) {
+    let m;
+    if ((m = l.match(/^## (.+)/))) { sec = m[1].trim().toLowerCase(); wk = null; continue; }
+    if ((m = l.match(/^### Week (\d+)/))) { wk = H.w.find((w) => w.n === +m[1]) || null; continue; }
+    if (!l.startsWith('|')) continue;
+    const c = cells(l);
+    if (sec === 'year overview') { const w = H.w.find((x) => x.n === +c[0]); if (w) OK.forEach((k, i) => { w.ov[k] = rd(k, c[3 + i]); }); }
+    else if (sec === 'meat schedule') { const i = HD.indexOf(c[0]); if (i >= 0) H.meat[i] = { meat: c[1] || '', notes: c[2] || '' }; }
+    else if (sec === 'daily logs' && wk) { const i = HD.indexOf(c[0]); if (i >= 0) DK.forEach((k, j) => { wk.days[i][k] = rd(k, c[1 + j]); }); }
+  }
+}
+/* health:data:end */
+
+async function showHealth(year, force) {
+  if (S.view === 'health' && year == null && !force) { render(); return; }
+  if (H.saveT) await hSaveNow();
+  await loadHealth(year == null ? (H.loaded ? H.year : new Date().getFullYear()) : year);
+  setView('health'); renderHealth();
+}
+async function loadHealth(year) {
+  H.year = year; H.w = genWeeks(year); H.meat = HD.map(() => ({ meat: '', notes: '' }));
+  const text = await api.healthLoad(year); H.created = !!text; if (text) fromMdH(text);
+  const t = todayN(), ci = H.w.findIndex((w) => t >= w.start && t <= w.start + 6);
+  H.sel = ci >= 0 ? ci : 0; H.loaded = true;
+}
+function hSaveSoon() { clearTimeout(H.saveT); H.saveT = setTimeout(hSaveNow, 500); }
+async function hSaveNow() { clearTimeout(H.saveT); H.saveT = null; await api.healthSave(H.year, toMdH()); if (!H.created) { H.created = true; refreshTree(); } }
+window.addEventListener('beforeunload', () => { if (H.saveT) api.healthSave(H.year, toMdH()); });
+
+const ovSeries = (k) => H.w.map((w) => (w.ov[k] == null ? null : w.ov[k]));
+const hasData = (w) => OK.some((k) => w.ov[k] != null);
+const lastIdx = () => { let L = -1; H.w.forEach((w, i) => { if (hasData(w)) L = i; }); return L; };
+const lastN = (k, n) => ovSeries(k).filter((v) => v != null).slice(-n);
+
+function renderHealth() {
+  const el = $('health');
+  el.innerHTML = `<div class="t-head"><div><h1>Health</h1><div class="t-sub" id="h-sub"></div></div>
+    <div class="g-tools"><button data-h="prev">‹</button><b class="h-yr">${H.year}</b><button data-h="next">›</button></div></div>
+    <div class="h-scroll"><div class="h-stats" id="h-stats"></div><div class="p-card" id="h-main"></div><div class="h-grid" id="h-minis"></div>
+      <div class="h-cols"><div class="h-colL"><div class="p-card" id="h-daily"></div><div class="p-card" id="h-meat"></div></div><div class="p-card h-colR" id="h-year"></div></div></div>`;
+  hCharts(); renderHDaily(); renderHMeat(); renderHYear();
+}
+function hCharts() {
+  const n = H.w.filter(hasData).length;
+  $('h-sub').textContent = `${H.year} · ${n} of ${H.w.length} weeks logged`;
+  renderHStats(); renderHMain(); renderHMinis();
+}
+
+function spark(v, color) {
+  if (v.length < 2) return '<svg class="h-spark" viewBox="0 0 120 34"></svg>';
+  const mn = Math.min(...v), mx = Math.max(...v), r = mx - mn || 1, id = 'sg' + color.slice(1);
+  const d = 'M' + v.map((x, i) => `${(4 + i * (112 / (v.length - 1))).toFixed(1)} ${(30 - ((x - mn) / r) * 26).toFixed(1)}`).join(' L');
+  return `<svg class="h-spark" viewBox="0 0 120 34"><defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".35"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><path d="${d} L116 34 L4 34 Z" fill="url(#${id})"/><path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+function renderHStats() {
+  $('h-stats').innerHTML = HK.filter((x) => x.k !== 'steps').map((x) => {
+    const all = lastN(x.k, 99), recent = all.slice(-4); let big = '', sub = 'No data yet';
+    if (all.length) {
+      if (x.k === 'weight') { const d = all[all.length - 1] - all[0]; big = fmtVal('weight', all[all.length - 1]) + '<em>lb</em>'; sub = all.length > 1 ? `${d > 0 ? '+' : d < 0 ? '−' : ''}${Math.abs(d).toFixed(1)} lb since first entry` : 'First entry'; }
+      else { big = fmtVal(x.k, avgOf(recent)) + (x.k === 'cal' ? '<em>kcal</em>' : x.k === 'pro' ? '<em>g</em>' : ''); sub = x.k === 'sleep' ? 'avg per night, last 4 weeks' : x.k === 'card' ? 'avg per week, last 4 weeks' : 'avg, last 4 weeks'; }
+    }
+    return `<div class="h-stat" style="--c:${x.color}"><small>${x.name}</small><b>${big || '–'}</b><small>${sub}</small>${spark(all.slice(-12), x.color)}</div>`;
+  }).join('');
+}
+
+function visibleIdx() {
+  const n = H.w.length, L = Math.max(lastIdx(), 0), first = H.w.findIndex(hasData);
+  if (H.range === 'year') return [...Array(n).keys()];
+  if (H.range === '12') { const len = Math.min(12, L + 1); return Array.from({ length: len }, (_, i) => L - len + 1 + i); }
+  const a = first < 0 ? 0 : first, b = Math.min(n - 1, Math.max(L, a + 7));
+  return Array.from({ length: b - a + 1 }, (_, i) => a + i);
+}
+function smooth(p) {
+  let d = `M${p[0][0].toFixed(1)} ${p[0][1].toFixed(1)}`;
+  for (let i = 0; i < p.length - 1; i++) {
+    const p0 = p[i - 1] || p[i], p1 = p[i], p2 = p[i + 1], p3 = p[i + 2] || p2;
+    d += `C${(p1[0] + (p2[0] - p0[0]) / 6).toFixed(1)} ${(p1[1] + (p2[1] - p0[1]) / 6).toFixed(1)} ${(p2[0] - (p3[0] - p1[0]) / 6).toFixed(1)} ${(p2[1] - (p3[1] - p1[1]) / 6).toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
+  }
+  return d;
+}
+function segments(pts, X, Y) {
+  const out = []; let seg = [];
+  pts.forEach((p) => { if (p) seg.push([X(p[0]), Y(p[1])]); else { if (seg.length) out.push(seg); seg = []; } });
+  if (seg.length) out.push(seg);
+  return out;
+}
+function chartSVG(idx, act) {
+  const Wd = 900, Ht = 310, L = 60, R = 60, T = 16, Bm = 46, pw = Wd - L - R, ph = Ht - T - Bm, n = idx.length;
+  const X = (j) => L + (n === 1 ? pw / 2 : (j / (n - 1)) * pw), bottom = T + ph;
+  let defs = '', body = '', axes = '', grid = '';
+  for (let g = 0; g <= 4; g++) { const y = T + (g / 4) * ph; grid += `<line x1="${L}" x2="${Wd - R}" y1="${y}" y2="${y}" class="h-grid-l"/>`; }
+  const used = [];
+  act.forEach((s) => {
+    const pts = idx.map((i, j) => (H.w[i].ov[s.k] == null ? null : [j, H.w[i].ov[s.k]])), vs = pts.filter(Boolean).map((p) => p[1]);
+    if (!vs.length) return;
+    let mn = Math.min(...vs), mx = Math.max(...vs); const pad = (mx - mn || Math.abs(mx) * 0.1 || 1) * 0.14; mn -= pad; mx += pad;
+    const Y = (v) => T + (1 - (v - mn) / (mx - mn)) * ph, first = used.length === 0;
+    used.push({ s, pts, Y, mn, mx });
+    defs += `<linearGradient id="ag-${s.k}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${s.color}" stop-opacity=".30"/><stop offset="1" stop-color="${s.color}" stop-opacity="0"/></linearGradient>`;
+    segments(pts, X, Y).forEach((seg) => {
+      if (seg.length > 1) {
+        if (first) body += `<path d="${smooth(seg)} L${seg[seg.length - 1][0].toFixed(1)} ${bottom} L${seg[0][0].toFixed(1)} ${bottom} Z" fill="url(#ag-${s.k})"/>`;
+        body += `<path d="${smooth(seg)}" fill="none" stroke="${s.color}" stroke-width="2.4" stroke-linecap="round" style="filter:drop-shadow(0 0 5px ${s.color})"/>`;
+      }
+      if (n <= 30 || seg.length === 1) seg.forEach((p) => { body += `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3" fill="${s.color}"/>`; });
+    });
+  });
+  [[used[0], 'start', L - 10], [used[1], 'end', Wd - R + 10]].forEach(([u, anchor, x]) => {
+    if (!u) return;
+    for (let g = 0; g <= 4; g++) { const v = u.mn + (1 - g / 4) * (u.mx - u.mn); axes += `<text x="${x}" y="${T + (g / 4) * ph + 4}" text-anchor="${anchor === 'start' ? 'end' : 'start'}" fill="${u.s.color}" class="h-ax">${fmtVal(u.s.k, v)}</text>`; }
+  });
+  const step = n > 26 ? 4 : n > 12 ? 2 : 1; let xl = '';
+  idx.forEach((i, j) => { if (j % step === 0) xl += `<text x="${X(j).toFixed(1)}" y="${Ht - 24}" text-anchor="middle" class="h-ax">W${H.w[i].n}</text><text x="${X(j).toFixed(1)}" y="${Ht - 9}" text-anchor="middle" class="h-ax dim">${H.w[i].mid}</text>`; });
+  H.geo = { X, n, L, pw, Wd, used, top: T, bottom };
+  return `<div class="h-chart"><svg viewBox="0 0 ${Wd} ${Ht}"><defs>${defs}</defs>${grid}${body}${axes}${xl}<line id="h-vl" y1="${T}" y2="${bottom}" class="h-vl" style="display:none"/>${used.map((u) => `<circle id="h-dot-${u.s.k}" r="5" fill="${u.s.color}" stroke="#0a0a0f" stroke-width="2" style="display:none"/>`).join('')}</svg><div class="h-tip"></div></div>`;
+}
+function bindHover(idx) {
+  const box = $('h-main').querySelector('.h-chart'), svg = box.querySelector('svg'), tp = box.querySelector('.h-tip'), g = H.geo, vl = $('h-vl');
+  box.onmousemove = (e) => {
+    const r = svg.getBoundingClientRect(), x = (e.clientX - r.left) * (g.Wd / r.width);
+    const j = g.n === 1 ? 0 : Math.max(0, Math.min(g.n - 1, Math.round(((x - g.L) / g.pw) * (g.n - 1)))), w = H.w[idx[j]], gx = g.X(j);
+    vl.setAttribute('x1', gx); vl.setAttribute('x2', gx); vl.style.display = '';
+    let rows = '';
+    g.used.forEach((u) => {
+      const dot = $('h-dot-' + u.s.k), v = u.pts[j] ? u.pts[j][1] : null;
+      if (v == null) { dot.style.display = 'none'; return; }
+      dot.setAttribute('cx', gx); dot.setAttribute('cy', u.Y(v)); dot.style.display = '';
+      rows += `<div><i style="background:${u.s.color}"></i>${u.s.name} <b>${fmtVal(u.s.k, v)}</b></div>`;
+    });
+    tp.innerHTML = `<strong>Week ${w.n} · ${dayLbl(w.start)} – ${dayLbl(w.start + 6)}</strong>${rows || '<div class="dim">No data</div>'}`; tp.style.display = 'block';
+    const px = (gx / g.Wd) * r.width; tp.style.left = (px > r.width - 230 ? px - tp.offsetWidth - 14 : px + 14) + 'px';
+  };
+  box.onmouseleave = () => { tp.style.display = 'none'; vl.style.display = 'none'; g.used.forEach((u) => { $('h-dot-' + u.s.k).style.display = 'none'; }); };
+}
+function renderHMain() {
+  const idx = visibleIdx(), act = HK.filter((x) => H.show[x.k]), el = $('h-main');
+  const chips = HK.map((x) => `<button class="h-chip${H.show[x.k] ? ' on' : ''}" data-h="tog" data-k="${x.k}" style="--c:${x.color}"><i></i>${x.name}</button>`).join('');
+  const rng = [['all', 'All data'], ['12', 'Last 12 weeks'], ['year', 'Full year']].map(([v, l]) => `<button data-h="range" data-v="${v}" class="${H.range === v ? 'on' : ''}">${l}</button>`).join('');
+  const has = act.some((x) => idx.some((i) => H.w[i].ov[x.k] != null));
+  el.innerHTML = `<div class="h-ch"><h3>Trends</h3><div class="h-chips">${chips}</div><div class="seg">${rng}</div></div>` +
+    (has ? chartSVG(idx, act) : `<div class="h-empty">${act.length ? 'Add weekly values in the year table below and your trends will show up here.' : 'Switch on at least one measure above.'}</div>`);
+  if (has) bindHover(idx);
+}
+
+function bars(v, labels, color, fmt, line) {
+  const w = 440, h = 170, L = 40, B = 24, T = 10, n = v.length, step = (w - L - 6) / Math.max(n, 1), bw = Math.max(3, Math.min(26, step * 0.6)), mx = Math.max(...v.filter((x) => x != null), 1), ph = h - T - B, id = 'bg' + color.slice(1);
+  let s = `<svg viewBox="0 0 ${w} ${h}" class="h-svg"><defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}"/><stop offset="1" stop-color="${color}" stop-opacity=".25"/></linearGradient></defs>`;
+  for (let g = 0; g <= 2; g++) { const y = T + (g / 2) * ph; s += `<line x1="${L}" x2="${w - 4}" y1="${y}" y2="${y}" class="h-grid-l"/><text x="${L - 6}" y="${y + 4}" text-anchor="end" class="h-ax">${fmt(mx * (1 - g / 2))}</text>`; }
+  v.forEach((x, i) => {
+    const cx = L + step * i + step / 2;
+    if (x != null) { const bh = (x / mx) * ph; s += `<rect x="${(cx - bw / 2).toFixed(1)}" y="${(T + ph - bh).toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="3" fill="url(#${id})" style="filter:drop-shadow(0 0 4px ${color}66)"><title>${labels[i]} · ${fmt(x)}</title></rect>`; }
+    if (n <= 14 || i % Math.ceil(n / 12) === 0) s += `<text x="${cx.toFixed(1)}" y="${h - 7}" text-anchor="middle" class="h-ax">${labels[i]}</text>`;
+  });
+  if (line) {
+    const lv = line.v.filter((x) => x != null);
+    if (lv.length) {
+      const mn = Math.min(...lv), hi = Math.max(...lv), r = hi - mn || 1, pts = line.v.map((x, i) => (x == null ? null : [i, x]));
+      segments(pts, (i) => L + step * i + step / 2, (x) => T + 6 + (1 - (x - mn) / r) * (ph - 12)).forEach((seg) => {
+        if (seg.length > 1) s += `<path d="${smooth(seg)}" fill="none" stroke="${line.color}" stroke-width="2" style="filter:drop-shadow(0 0 4px ${line.color})"/>`;
+        seg.forEach((p) => { s += `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3" fill="${line.color}"/>`; });
+      });
+    }
+  }
+  return s + '</svg>';
+}
+function renderHMinis() {
+  const idx = visibleIdx().slice(-26), lab = idx.map((i) => 'W' + H.w[i].n), cur = H.w[H.sel], t = todayN();
+  const wk = (k) => idx.map((i) => (H.w[i].ov[k] == null ? null : H.w[i].ov[k]));
+  const dayV = (k) => cur.days.map((d) => (d[k] == null ? null : d[k]));
+  const hrs = (m) => (m < 60 ? Math.round(m) + 'm' : (m / 60).toFixed(m % 60 ? 1 : 0) + 'h');
+  const heat = H.w.map((w) => `<i class="h-cell${hasData(w) ? ' on' : ''}${t >= w.start && t <= w.start + 6 ? ' cur' : ''}" title="Week ${w.n} · ${dayLbl(w.start)} – ${dayLbl(w.start + 6)}${hasData(w) ? '' : ' · nothing logged'}"></i>`).join('');
+  $('h-minis').innerHTML = `
+    <div class="p-card"><div class="h-ch"><h3>Sleep per night</h3></div>${bars(wk('sleep'), lab, '#8b5cf6', hrs)}</div>
+    <div class="p-card"><div class="h-ch"><h3>Cardio per week</h3></div>${bars(wk('card'), lab, '#34d399', hrs)}</div>
+    <div class="p-card"><div class="h-ch"><h3>Week ${cur.n} · calories <small class="dim">with weight</small></h3></div>${bars(dayV('cal'), HD, '#f59e0b', (x) => String(Math.round(x)), { v: dayV('weight'), color: '#22d3ee' })}</div>
+    <div class="p-card"><div class="h-ch"><h3>Weeks logged</h3></div><div class="h-heat">${heat}</div></div>`;
+}
+
+function renderHDaily() {
+  const w = H.w[H.sel], el = $('h-daily');
+  const rows = HD.map((d, i) => `<tr><td class="dn">${d}<small>${new Date((w.start + i) * 864e5).getUTCDate()}</small></td>${DK.map((k) => `<td><input class="h-in" data-s="d" data-r="${i}" data-c="${k}" value="${inStr(k, w.days[i][k])}" placeholder="–"></td>`).join('')}</tr>`).join('');
+  el.innerHTML = `<div class="h-ch"><h3>Week log</h3><div class="h-wk"><button data-h="wprev">‹</button><span>Week ${w.n} · ${dayLbl(w.start)} – ${dayLbl(w.start + 6)}</span><button data-h="wnext">›</button></div></div>
+    <table class="h-tbl"><thead><tr><th>Day</th><th>Weight</th><th>Calories</th><th>Protein</th><th>Cardio</th><th>Sleep</th></tr></thead><tbody>${rows}</tbody>
+    <tfoot><tr><td>Average</td>${DK.map((k) => `<td id="h-avg-${k}"></td>`).join('')}</tr><tr><td>Total</td>${DK.map((k) => `<td id="h-tot-${k}"></td>`).join('')}</tr></tfoot></table>
+    <div class="h-actions"><button data-h="fill" title="Writes this week's average weight, calories, protein and sleep, and total cardio, into the year table">Copy to year table</button><span class="h-hint">Cardio and sleep accept 7h 30m, 7:30 or plain minutes.</span></div>`;
+  hFoot();
+}
+function hFoot() {
+  const w = H.w[H.sel];
+  DK.forEach((k) => { const v = vals(w, k); $('h-avg-' + k).textContent = v.length ? cell(k, avgOf(v), true) : ''; $('h-tot-' + k).textContent = k === 'weight' || !v.length ? '' : cell(k, sum(v)); });
+}
+function renderHMeat() {
+  $('h-meat').innerHTML = `<div class="h-ch"><h3>Meat schedule</h3></div><table class="h-tbl"><thead><tr><th>Day</th><th>Meat</th><th>Notes</th></tr></thead><tbody>${HD.map((d, i) => `<tr><td class="dn">${d}</td><td><input class="h-in" data-s="m" data-r="${i}" data-c="meat" value="${esc(H.meat[i].meat).replace(/"/g, '&quot;')}"></td><td><input class="h-in" data-s="m" data-r="${i}" data-c="notes" value="${esc(H.meat[i].notes).replace(/"/g, '&quot;')}"></td></tr>`).join('')}</tbody></table>`;
+}
+function renderHYear() {
+  const t = todayN(), names = { weight: 'Weight', cal: 'Calories', pro: 'Protein', card: 'Cardio', steps: 'Steps', sleep: 'Sleep' };
+  const rows = H.w.map((w, i) => `<tr data-wi="${i}" class="m${new Date((w.start + 3) * 864e5).getUTCMonth() % 2}${i === H.sel ? ' sel' : ''}${t >= w.start && t <= w.start + 6 ? ' now' : ''}"><td class="wk">${w.n}</td><td class="dt">${dayLbl(w.start)} – ${dayLbl(w.start + 6)}<small>${w.months}</small></td>${OK.map((k) => `<td><input class="h-in" data-s="o" data-r="${i}" data-c="${k}" value="${inStr(k, w.ov[k])}" placeholder="–"></td>`).join('')}</tr>`).join('');
+  $('h-year').innerHTML = `<div class="h-ch"><h3>Year overview</h3><span class="h-hint">Typed in by hand. Nothing here is filled in for you.</span></div>
+    <div class="h-yscroll"><table class="h-tbl h-ytbl"><thead><tr><th>Wk</th><th>Dates</th>${OK.map((k) => `<th>${names[k]}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  const sel = $('h-year').querySelector('tr.sel'); if (sel) sel.scrollIntoView({ block: 'center' });
+}
+function hSelect(i) {
+  H.sel = Math.max(0, Math.min(H.w.length - 1, i));
+  const y = $('h-year'); y.querySelectorAll('tr.sel').forEach((r) => r.classList.remove('sel')); const row = y.querySelector(`tr[data-wi="${H.sel}"]`); if (row) row.classList.add('sel');
+  renderHDaily(); renderHMinis();
+}
+
+const hEl = $('health');
+hEl.addEventListener('click', async (e) => {
+  const tr = e.target.closest('tr[data-wi]');
+  if (tr && e.target.closest('td.wk, td.dt')) { hSelect(+tr.dataset.wi); return; }
+  const b = e.target.closest('button'); if (!b || !b.dataset.h) return; const a = b.dataset.h;
+  if (a === 'prev' || a === 'next') { if (H.saveT) await hSaveNow(); await loadHealth(H.year + (a === 'next' ? 1 : -1)); renderHealth(); }
+  else if (a === 'tog') { H.show[b.dataset.k] = !H.show[b.dataset.k]; renderHMain(); }
+  else if (a === 'range') { H.range = b.dataset.v; renderHMain(); renderHMinis(); }
+  else if (a === 'wprev') hSelect(H.sel - 1);
+  else if (a === 'wnext') hSelect(H.sel + 1);
+  else if (a === 'fill') {
+    const w = H.w[H.sel], f = {};
+    ['weight', 'cal', 'pro', 'sleep'].forEach((k) => { const v = vals(w, k); if (v.length) f[k] = k === 'weight' ? Math.round(avgOf(v) * 10) / 10 : Math.round(avgOf(v)); });
+    const c = vals(w, 'card'); if (c.length) f.card = sum(c);
+    if (!Object.keys(f).length) return;
+    if (Object.keys(f).some((k) => w.ov[k] != null) && !confirm(`Replace the values already in week ${w.n} of the year table?`)) return;
+    Object.assign(w.ov, f);
+    Object.keys(f).forEach((k) => { const i = hEl.querySelector(`input[data-s="o"][data-r="${H.sel}"][data-c="${k}"]`); if (i) i.value = inStr(k, f[k]); });
+    hCharts(); hSaveSoon();
+  }
+});
+hEl.addEventListener('change', (e) => {
+  const i = e.target; if (!i.classList.contains('h-in')) return;
+  const s = i.dataset.s, k = i.dataset.c, r = +i.dataset.r;
+  if (s === 'm') { H.meat[r][k] = i.value.trim(); hSaveSoon(); return; }
+  const raw = i.value.trim(), v = raw === '' ? null : rd(k, raw), tgt = s === 'd' ? H.w[H.sel].days[r] : H.w[r].ov;
+  if (raw !== '' && v == null) { i.classList.add('bad'); i.value = inStr(k, tgt[k]); setTimeout(() => i.classList.remove('bad'), 900); return; }
+  tgt[k] = v; i.value = inStr(k, v);
+  if (s === 'd') { hFoot(); renderHMinis(); } else hCharts();
+  hSaveSoon();
+});
+hEl.addEventListener('keydown', (e) => {
+  const i = e.target; if (e.key !== 'Enter' || !i.classList || !i.classList.contains('h-in')) return;
+  const nx = hEl.querySelector(`input[data-s="${i.dataset.s}"][data-c="${i.dataset.c}"][data-r="${+i.dataset.r + 1}"]`);
+  i.blur(); if (nx) nx.focus();
+});
+$('btn-health').onclick = () => showHealth();

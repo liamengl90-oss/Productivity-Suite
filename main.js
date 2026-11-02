@@ -81,6 +81,10 @@ const dataFile = (n) => path.join(root, path.basename(String(n)));
 ipcMain.handle('data:load', (_, n) => { try { return fs.readFileSync(dataFile(n), 'utf8'); } catch { return ''; } });
 ipcMain.handle('data:save', (_, n, text) => { if (/\.json$/i.test(String(n))) fs.writeFileSync(dataFile(n), text); });
 
+const healthDir = () => path.join(root, 'Health');
+ipcMain.handle('health:load', (_, year) => { try { return fs.readFileSync(path.join(healthDir(), `Health ${Number(year)}.md`), 'utf8'); } catch { return ''; } });
+ipcMain.handle('health:save', (_, year, text) => { fs.mkdirSync(healthDir(), { recursive: true }); fs.writeFileSync(path.join(healthDir(), `Health ${Number(year)}.md`), text); });
+
 app.whenReady().then(() => {
   win = new BrowserWindow({
     width: 1280, height: 800, minWidth: 720, minHeight: 460,

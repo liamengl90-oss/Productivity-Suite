@@ -6,4 +6,5 @@ contextBridge.exposeInMainWorld('api', {
   createDir: call('dir:create'), renameDir: call('dir:rename'), move: call('fs:move'), trash: call('fs:trash'),
   loadTasks: call('tasks:load'), saveTasks: call('tasks:save'),
   loadData: call('data:load'), saveData: call('data:save'),
+  healthLoad: call('health:load'), healthSave: call('health:save'),
 });
