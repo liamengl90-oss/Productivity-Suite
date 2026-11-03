@@ -7,4 +7,5 @@ contextBridge.exposeInMainWorld('api', {
   loadTasks: call('tasks:load'), saveTasks: call('tasks:save'),
   loadData: call('data:load'), saveData: call('data:save'),
   healthLoad: call('health:load'), healthSave: call('health:save'),
+  financeLoad: call('finance:load'), financeSave: call('finance:save'),
 });

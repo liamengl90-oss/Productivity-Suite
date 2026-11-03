@@ -13,7 +13,7 @@ function scan(dir) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     if (e.name.startsWith('.')) continue;
     const p = path.join(dir, e.name);
-    if (e.isDirectory()) out.push({ type: 'dir', name: e.name, path: p, children: scan(p) });
+    if (e.isDirectory()) { if (dir === root && (e.name === 'Health' || e.name === 'Finance')) continue; out.push({ type: 'dir', name: e.name, path: p, children: scan(p) }); }
     else if (e.name.toLowerCase().endsWith('.md')) out.push({ type: 'file', name: e.name.slice(0, -3), path: p });
   }
   return out.sort((a, b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1);
@@ -85,9 +85,13 @@ const healthDir = () => path.join(root, 'Health');
 ipcMain.handle('health:load', (_, year) => { try { return fs.readFileSync(path.join(healthDir(), `Health ${Number(year)}.md`), 'utf8'); } catch { return ''; } });
 ipcMain.handle('health:save', (_, year, text) => { fs.mkdirSync(healthDir(), { recursive: true }); fs.writeFileSync(path.join(healthDir(), `Health ${Number(year)}.md`), text); });
 
+const finPath = (ym) => (/^\d{4}-\d{2}$/.test(String(ym)) ? path.join(root, 'Finance', `Outgoing ${ym}.md`) : null);
+ipcMain.handle('finance:load', (_, ym) => { const p = finPath(ym); try { return p ? fs.readFileSync(p, 'utf8') : ''; } catch { return ''; } });
+ipcMain.handle('finance:save', (_, ym, text) => { const p = finPath(ym); if (!p) return; fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, text); });
+
 app.whenReady().then(() => {
   win = new BrowserWindow({
-    width: 1280, height: 800, minWidth: 720, minHeight: 460,
+    width: 1280, height: 800, minWidth: 340, minHeight: 460,
     backgroundColor: '#0c0d12', autoHideMenuBar: true, title: 'Signal Path',
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
   });

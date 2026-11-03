@@ -341,7 +341,7 @@ const mv = (a, i, d) => { const j = i + d; if (j >= 0 && j < a.length) [a[i], a[
 let tSave = null;
 const tip = document.createElement('div'); tip.id = 't-tip'; tip.hidden = true; document.body.appendChild(tip);
 
-function setView(v) { S.view = v; document.body.classList.toggle('view-tasks', v === 'tasks'); document.body.classList.toggle('view-gantt', v === 'gantt'); $('btn-tasks').classList.toggle('on', v === 'tasks'); $('btn-gantt').classList.toggle('on', v === 'gantt'); document.body.classList.toggle('view-pomo', v === 'pomo'); $('btn-pomo').classList.toggle('on', v === 'pomo'); document.body.classList.toggle('view-health', v === 'health'); $('btn-health').classList.toggle('on', v === 'health'); tip.hidden = true; }
+function setView(v) { S.view = v; document.body.classList.toggle('view-tasks', v === 'tasks'); document.body.classList.toggle('view-gantt', v === 'gantt'); $('btn-tasks').classList.toggle('on', v === 'tasks'); $('btn-gantt').classList.toggle('on', v === 'gantt'); document.body.classList.toggle('view-pomo', v === 'pomo'); $('btn-pomo').classList.toggle('on', v === 'pomo'); document.body.classList.toggle('view-health', v === 'health'); $('btn-health').classList.toggle('on', v === 'health'); document.body.classList.toggle('view-finance', v === 'finance'); $('btn-finance').classList.toggle('on', v === 'finance'); tip.hidden = true; }
 function tSaveNow() { clearTimeout(tSave); tSave = null; if (S.tasks) api.saveTasks(JSON.stringify(S.tasks, null, 1)); }
 function tChanged() { renderTasks(); clearTimeout(tSave); tSave = setTimeout(tSaveNow, 300); }
 window.addEventListener('beforeunload', () => { if (tSave) tSaveNow(); });
@@ -398,8 +398,9 @@ function renderTasks() {
     <div class="t-prog" title="${pct}%"><i style="width:${pct}%"></i></div><button id="t-reset">Uncheck all</button></div><div class="t-board"></div>`;
   $('t-reset').onclick = () => { all.forEach((t) => { t.done = false; }); tChanged(); };
   const board = el.querySelector('.t-board');
-  T.categories.forEach((c, ci) => board.appendChild(colEl(c, ci)));
-  board.appendChild(ghostCol());
+  const lines = [0, 1].map(() => { const l = document.createElement('div'); l.className = 't-line'; return l; });
+  T.categories.forEach((c, ci) => lines[c.row ? 1 : 0].appendChild(colEl(c, ci)));
+  lines[0].appendChild(ghostCol()); board.appendChild(lines[0]); if (lines[1].children.length) board.appendChild(lines[1]);
   board.scrollLeft = sl; board.scrollTop = st;
   if (S.focusAdd) { const i = el.querySelector(`.t-add[data-cat="${S.focusAdd}"]`); if (i) i.focus(); S.focusAdd = null; }
 }
@@ -412,8 +413,7 @@ function colEl(c, ci) {
     ['Rename', () => inlineEdit(d.querySelector('.t-name'), c.name, (v) => { c.name = v; tChanged(); })],
     ['Change color', () => { c.color = (c.color + 1) % PAL.length; tChanged(); }],
     ['Uncheck all', () => { c.tasks.forEach((t) => { t.done = false; }); tChanged(); }],
-    ci > 0 && ['Move left', () => { mv(T.categories, ci, -1); tChanged(); }],
-    ci < T.categories.length - 1 && ['Move right', () => { mv(T.categories, ci, 1); tChanged(); }],
+    ...rowMoves(c, ci),
     null,
     ['Delete category', () => { if (c.tasks.length && !confirm(`Delete "${c.name}" and its ${c.tasks.length} tasks?`)) return; T.categories.splice(ci, 1); tChanged(); }, 'danger'],
   ].filter((x) => x !== false));
@@ -744,7 +744,7 @@ $('btn-gantt').onclick = showGantt;
 
 /* ---------- pomodoro ---------- */
 const P = {
-  cfg: { focus: 25, short: 5, long: 15, rounds: 4, autoBreak: true, autoFocus: false, sound: true, notify: true },
+  cfg: { focus: 25, short: 5, long: 15, rounds: 4, autoBreak: true, autoFocus: false, sound: true, notify: true, style: 'ring' },
   mode: 'focus', total: 1500, left: 1500, running: false, endAt: 0, round: 1, task: '', stats: {},
   tick: null, loaded: false, lit: -1, save: null,
 };
@@ -820,16 +820,43 @@ const ICON = {
   skip: '<svg viewBox="0 0 24 24"><path d="M6 6l8.5 6L6 18zM16 6h2v12h-2z"/></svg>',
 };
 
-function renderPomo() {
-  const el = $('pomo'), c = P.cfg; el.dataset.mode = P.mode; P.lit = -1;
-  const today = pk(new Date()), st = P.stats[today] || { n: 0, min: 0 };
+const STY = [['ring', 'Ring'], ['glass', 'Hourglass'], ['meter', 'Level meter'], ['term', 'Terminal'], ['flip', 'Flip clock']];
+const GLASS = 'M36 20H164V40Q164 104 108 146V154Q164 196 164 260V280H36V260Q36 196 92 154V146Q36 104 36 40Z';
+const dotsHtml = () => {
   const done = P.mode === 'focus' ? P.round - 1 : P.round;
-  const dots = Array.from({ length: c.rounds }, (_, i) => `<i class="p-dot${i < done ? ' on' : ''}${P.mode === 'focus' && i === P.round - 1 ? ' cur' : ''}"></i>`).join('');
+  return Array.from({ length: P.cfg.rounds }, (_, i) => `<i class="p-dot${i < done ? ' on' : ''}${P.mode === 'focus' && i === P.round - 1 ? ' cur' : ''}"></i>`).join('');
+};
+const flipHtml = (t) => [...t].map((ch) => (ch === ':' ? '<i class="pfc">:</i>' : `<b class="pf">${ch}</b>`)).join('');
+
+function visual() {
+  const st = P.cfg.style, t = mmss(P.left), lab = `<div class="p-lab">${MODES[P.mode]}</div>`, dots = `<div class="p-dots">${dotsHtml()}</div>`;
+  if (st === 'glass') {
+    return `<div class="p-glass"><svg viewBox="0 0 200 300"><defs><clipPath id="gclip"><path d="${GLASS}"/></clipPath><linearGradient id="gsand" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--pa)"/><stop offset="1" style="stop-color:var(--pb)"/></linearGradient></defs>
+      <g clip-path="url(#gclip)"><rect id="g-top" class="p-sand" x="30" width="140"/><rect id="g-bot" class="p-sand" x="30" width="140"/><line id="g-str" class="p-stream" x1="100" x2="100"/></g>
+      <path d="${GLASS}" class="p-gl"/><rect x="24" y="8" width="152" height="12" rx="5" class="p-gcap"/><rect x="24" y="280" width="152" height="12" rx="5" class="p-gcap"/></svg>
+      <div class="p-gt">${lab}<div class="p-time" id="p-time">${t}</div>${dots}</div></div>`;
+  }
+  if (st === 'meter') {
+    return `<div class="p-meter">${lab}<div class="p-time" id="p-time">${t}</div><div class="p-leds" id="p-leds">${Array.from({ length: 40 }, (_, i) => `<i style="--t:${(i / 39 * 100).toFixed(0)}%;height:${(30 + i / 39 * 70).toFixed(0)}%"></i>`).join('')}</div><div class="p-scale"><span>0</span><span>25</span><span>50</span><span>75</span><span>100%</span></div>${dots}</div>`;
+  }
+  if (st === 'term') {
+    return `<div class="p-term"><div class="p-tl dim">signal-path ~ focus --session ${P.round}/${P.cfg.rounds}</div>${lab}<div class="p-time" id="p-time">${t}</div><div class="p-tbar" id="p-tbar"></div><div class="p-tlines" id="p-tlines"></div></div>`;
+  }
+  if (st === 'flip') return `<div class="p-flip">${lab}<div class="p-fl" id="p-fl">${flipHtml(t)}</div>${dots}</div>`;
   let ticks = '';
   for (let i = 0; i < 60; i++) {
     const a = (i * 6 - 90) * Math.PI / 180, r1 = i % 5 === 0 ? 166 : 171, r2 = 187;
     ticks += `<line class="p-tk${i % 5 === 0 ? ' m' : ''}" x1="${(200 + r1 * Math.cos(a)).toFixed(1)}" y1="${(200 + r1 * Math.sin(a)).toFixed(1)}" x2="${(200 + r2 * Math.cos(a)).toFixed(1)}" y2="${(200 + r2 * Math.sin(a)).toFixed(1)}"/>`;
   }
+  return `<div class="p-ring"><svg viewBox="0 0 400 400"><defs><linearGradient id="pg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" style="stop-color:var(--pa)"/><stop offset="1" style="stop-color:var(--pb)"/></linearGradient></defs>
+    <circle class="p-inner" cx="200" cy="200" r="124"/>${ticks}<circle class="p-track" cx="200" cy="200" r="148"/>
+    <circle class="p-prog" id="p-prog" cx="200" cy="200" r="148" stroke-dasharray="${CIRC}" stroke-dashoffset="${CIRC}"/></svg>
+    <div class="p-center">${lab}<div class="p-time" id="p-time">${t}</div>${dots}</div></div>`;
+}
+
+function renderPomo() {
+  const el = $('pomo'), c = P.cfg; el.dataset.mode = P.mode; P.lit = -1;
+  const today = pk(new Date()), st = P.stats[today] || { n: 0, min: 0 };
   const step = (k, label, unit) => `<div class="p-row"><span>${label}</span><div class="p-step"><button data-k="${k}" data-d="-1">−</button><b>${c[k]}${unit}</b><button data-k="${k}" data-d="1">+</button></div></div>`;
   const sw = (k, label) => `<div class="p-row"><span>${label}</span><button class="p-sw${c[k] ? ' on' : ''}" data-t="${k}"><i></i></button></div>`;
   const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - (6 - i)); return { d, n: (P.stats[pk(d)] || { n: 0 }).n }; });
@@ -840,17 +867,12 @@ function renderPomo() {
     <div class="p-wrap">
       <div class="p-stage">
         <div class="seg p-modes">${Object.entries(MODES).map(([m, l]) => `<button data-m="${m}" class="${P.mode === m ? 'on' : ''}">${l}</button>`).join('')}</div>
-        <div class="p-ring">
-          <svg viewBox="0 0 400 400"><defs><linearGradient id="pg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" style="stop-color:var(--pa)"/><stop offset="1" style="stop-color:var(--pb)"/></linearGradient></defs>
-            <circle class="p-inner" cx="200" cy="200" r="124"/>${ticks}
-            <circle class="p-track" cx="200" cy="200" r="148"/>
-            <circle class="p-prog" id="p-prog" cx="200" cy="200" r="148" stroke-dasharray="${CIRC}" stroke-dashoffset="${CIRC}"/></svg>
-          <div class="p-center"><div class="p-lab">${MODES[P.mode]}</div><div class="p-time" id="p-time">${mmss(P.left)}</div><div class="p-dots">${dots}</div></div>
-        </div>
+        ${visual()}
         <div class="p-ctrl"><button class="p-btn" id="p-reset" title="Reset">${ICON.reset}</button><button class="p-go" id="p-go" title="Start / pause (Space)">${P.running ? ICON.pause : ICON.play}</button><button class="p-btn" id="p-skip" title="Skip to next">${ICON.skip}</button></div>
         <input class="p-task" placeholder="What are you focusing on?" value="${esc(P.task).replace(/"/g, '&quot;')}" spellcheck="false">
       </div>
       <aside class="p-side">
+        <div class="p-card"><h3>Look</h3><div class="p-styles">${STY.map(([k, l]) => `<button class="p-sty${c.style === k ? ' on' : ''}" data-sty="${k}">${l}</button>`).join('')}</div></div>
         <div class="p-card"><h3>Timer</h3>${step('focus', 'Focus', ' min')}${step('short', 'Short break', ' min')}${step('long', 'Long break', ' min')}${step('rounds', 'Rounds before long break', '')}</div>
         <div class="p-card"><h3>Automation &amp; alerts</h3>${sw('autoBreak', 'Auto-start breaks')}${sw('autoFocus', 'Auto-start focus')}${sw('sound', 'Chime when done')}${sw('notify', 'Desktop notification')}</div>
         <div class="p-card"><h3>Your focus</h3><div class="p-stats"><div class="p-stat"><b>${st.n}</b><small>sessions today</small></div><div class="p-stat"><b>${st.min}</b><small>minutes today</small></div></div><div class="p-week">${week}</div></div>
@@ -860,20 +882,37 @@ function renderPomo() {
 }
 
 function updPomo() {
-  const t = $('p-time'), frac = P.total ? 1 - P.left / P.total : 0;
-  if (t) {
-    t.textContent = mmss(P.left);
+  const frac = P.total ? 1 - P.left / P.total : 0, st = P.cfg.style, t = mmss(P.left), pt = $('p-time');
+  if (pt) pt.textContent = t;
+  if (st === 'glass' && $('g-top')) {
+    const th = 130 * (1 - frac), bh = 130 * frac, s = $('g-str');
+    $('g-top').setAttribute('y', 150 - th); $('g-top').setAttribute('height', th);
+    $('g-bot').setAttribute('y', 280 - bh); $('g-bot').setAttribute('height', bh);
+    s.setAttribute('y1', 148); s.setAttribute('y2', 280 - bh); s.style.display = P.running && frac < 1 ? '' : 'none';
+  } else if (st === 'meter' && $('p-leds')) {
+    const n = Math.round(frac * 40);
+    if (n !== P.lit) { P.lit = n; $('p-leds').querySelectorAll('i').forEach((l, i) => l.classList.toggle('on', i < n)); }
+  } else if (st === 'term' && $('p-tbar')) {
+    const n = Math.round(frac * 30), state = P.running ? 'RUNNING' : P.left === P.total ? 'READY' : 'PAUSED';
+    $('p-tbar').textContent = `[${'█'.repeat(n)}${'░'.repeat(30 - n)}] ${Math.round(frac * 100)}%`;
+    $('p-tlines').innerHTML = `<div>&gt; mode     ${MODES[P.mode].toUpperCase()}</div><div>&gt; task     ${esc(P.task) || '–'}</div><div>&gt; elapsed  ${mmss(P.total - P.left)}</div><div>&gt; status   ${state}<span class="p-cur">█</span></div>`;
+  } else if (st === 'flip' && $('p-fl')) {
+    const cs = [...$('p-fl').querySelectorAll('.pf')], chars = t.replace(':', '').split('');
+    if (cs.length !== chars.length) $('p-fl').innerHTML = flipHtml(t);
+    else cs.forEach((c, i) => { if (c.textContent !== chars[i]) { c.textContent = chars[i]; c.classList.remove('flip'); void c.offsetWidth; c.classList.add('flip'); } });
+  } else if ((st === 'ring' || !st) && $('p-prog')) {
     $('p-prog').style.strokeDashoffset = CIRC * (1 - frac);
     const n = Math.floor(frac * 60);
     if (n !== P.lit) { P.lit = n; $('pomo').querySelectorAll('.p-tk').forEach((k, i) => k.classList.toggle('on', i < n)); }
   }
-  $('btn-pomo').textContent = P.running ? `● ${mmss(P.left)}` : 'Pomodoro';
+  const b = $('btn-pomo'); b.textContent = P.running ? `${P.mode === 'focus' ? '●' : '☕'} ${mmss(P.left)}` : 'Pomodoro'; b.classList.toggle('live', P.running);
   document.title = P.running ? `${mmss(P.left)} · ${MODES[P.mode]}` : 'Signal Path';
 }
 
 $('pomo').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
-  if (b.dataset.m) setMode(b.dataset.m, false);
+  if (b.dataset.sty) { P.cfg.style = b.dataset.sty; pSaveSoon(); renderPomo(); }
+  else if (b.dataset.m) setMode(b.dataset.m, false);
   else if (b.dataset.k) {
     const k = b.dataset.k, [lo, hi] = LIM[k];
     P.cfg[k] = Math.max(lo, Math.min(hi, P.cfg[k] + +b.dataset.d));
@@ -950,7 +989,6 @@ function toMdH() {
       o += `\n### Week ${w.n} · ${dayLbl(w.start)} – ${dayLbl(w.start + 6)}\n| Day | Weight | Calories | Protein | Cardio | Sleep |\n|---|---|---|---|---|---|\n`;
       w.days.forEach((d, i) => { o += `| ${HD[i]} | ${DK.map((k) => cell(k, d[k])).join(' | ')} |\n`; });
       o += `| **Average** | ${DK.map((k) => cell(k, avgOf(vals(w, k)), true)).join(' | ')} |\n`;
-      o += `| **Total** | ${DK.map((k) => (k === 'weight' ? '' : cell(k, vals(w, k).length ? sum(vals(w, k)) : null))).join(' | ')} |\n`;
     });
   }
   return o;
@@ -1016,7 +1054,12 @@ function renderHStats() {
   $('h-stats').innerHTML = HK.filter((x) => x.k !== 'steps').map((x) => {
     const all = lastN(x.k, 99), recent = all.slice(-4); let big = '', sub = 'No data yet';
     if (all.length) {
-      if (x.k === 'weight') { const d = all[all.length - 1] - all[0]; big = fmtVal('weight', all[all.length - 1]) + '<em>lb</em>'; sub = all.length > 1 ? `${d > 0 ? '+' : d < 0 ? '−' : ''}${Math.abs(d).toFixed(1)} lb since first entry` : 'First entry'; }
+      if (x.k === 'weight') {
+        const ws = ovSeries('weight'); let li = ws.length - 1; while (li >= 0 && ws[li] == null) li--;
+        let pi = li - 4; while (pi >= 0 && ws[pi] == null) pi--;
+        big = fmtVal('weight', ws[li]) + '<em>lb</em>';
+        if (pi >= 0) { const d = ws[li] - ws[pi]; sub = `${d > 0 ? '+' : d < 0 ? '−' : ''}${Math.abs(d).toFixed(1)} lb since 4 weeks ago`; } else sub = 'Not enough history yet';
+      }
       else { big = fmtVal(x.k, avgOf(recent)) + (x.k === 'cal' ? '<em>kcal</em>' : x.k === 'pro' ? '<em>g</em>' : ''); sub = x.k === 'sleep' ? 'avg per night, last 4 weeks' : x.k === 'card' ? 'avg per week, last 4 weeks' : 'avg, last 4 weeks'; }
     }
     return `<div class="h-stat" style="--c:${x.color}"><small>${x.name}</small><b>${big || '–'}</b><small>${sub}</small>${spark(all.slice(-12), x.color)}</div>`;
@@ -1124,30 +1167,22 @@ function bars(v, labels, color, fmt, line) {
   return s + '</svg>';
 }
 function renderHMinis() {
-  const idx = visibleIdx().slice(-26), lab = idx.map((i) => 'W' + H.w[i].n), cur = H.w[H.sel], t = todayN();
-  const wk = (k) => idx.map((i) => (H.w[i].ov[k] == null ? null : H.w[i].ov[k]));
-  const dayV = (k) => cur.days.map((d) => (d[k] == null ? null : d[k]));
-  const hrs = (m) => (m < 60 ? Math.round(m) + 'm' : (m / 60).toFixed(m % 60 ? 1 : 0) + 'h');
+  const t = todayN(), n = H.w.filter(hasData).length;
   const heat = H.w.map((w) => `<i class="h-cell${hasData(w) ? ' on' : ''}${t >= w.start && t <= w.start + 6 ? ' cur' : ''}" title="Week ${w.n} · ${dayLbl(w.start)} – ${dayLbl(w.start + 6)}${hasData(w) ? '' : ' · nothing logged'}"></i>`).join('');
-  $('h-minis').innerHTML = `
-    <div class="p-card"><div class="h-ch"><h3>Sleep per night</h3></div>${bars(wk('sleep'), lab, '#8b5cf6', hrs)}</div>
-    <div class="p-card"><div class="h-ch"><h3>Cardio per week</h3></div>${bars(wk('card'), lab, '#34d399', hrs)}</div>
-    <div class="p-card"><div class="h-ch"><h3>Week ${cur.n} · calories <small class="dim">with weight</small></h3></div>${bars(dayV('cal'), HD, '#f59e0b', (x) => String(Math.round(x)), { v: dayV('weight'), color: '#22d3ee' })}</div>
-    <div class="p-card"><div class="h-ch"><h3>Weeks logged</h3></div><div class="h-heat">${heat}</div></div>`;
+  $('h-minis').innerHTML = `<div class="p-card"><div class="h-ch"><h3>Weeks logged</h3><span class="h-hint">${n} of ${H.w.length}</span></div><div class="h-heat">${heat}</div></div>`;
 }
-
 function renderHDaily() {
   const w = H.w[H.sel], el = $('h-daily');
   const rows = HD.map((d, i) => `<tr><td class="dn">${d}<small>${new Date((w.start + i) * 864e5).getUTCDate()}</small></td>${DK.map((k) => `<td><input class="h-in" data-s="d" data-r="${i}" data-c="${k}" value="${inStr(k, w.days[i][k])}" placeholder="–"></td>`).join('')}</tr>`).join('');
   el.innerHTML = `<div class="h-ch"><h3>Week log</h3><div class="h-wk"><button data-h="wprev">‹</button><span>Week ${w.n} · ${dayLbl(w.start)} – ${dayLbl(w.start + 6)}</span><button data-h="wnext">›</button></div></div>
     <table class="h-tbl"><thead><tr><th>Day</th><th>Weight</th><th>Calories</th><th>Protein</th><th>Cardio</th><th>Sleep</th></tr></thead><tbody>${rows}</tbody>
-    <tfoot><tr><td>Average</td>${DK.map((k) => `<td id="h-avg-${k}"></td>`).join('')}</tr><tr><td>Total</td>${DK.map((k) => `<td id="h-tot-${k}"></td>`).join('')}</tr></tfoot></table>
+    <tfoot><tr><td>Average</td>${DK.map((k) => `<td id="h-avg-${k}"></td>`).join('')}</tr></tfoot></table>
     <div class="h-actions"><button data-h="fill" title="Writes this week's average weight, calories, protein and sleep, and total cardio, into the year table">Copy to year table</button><span class="h-hint">Cardio and sleep accept 7h 30m, 7:30 or plain minutes.</span></div>`;
   hFoot();
 }
 function hFoot() {
   const w = H.w[H.sel];
-  DK.forEach((k) => { const v = vals(w, k); $('h-avg-' + k).textContent = v.length ? cell(k, avgOf(v), true) : ''; $('h-tot-' + k).textContent = k === 'weight' || !v.length ? '' : cell(k, sum(v)); });
+  DK.forEach((k) => { const v = vals(w, k); $('h-avg-' + k).textContent = v.length ? cell(k, avgOf(v), true) : ''; });
 }
 function renderHMeat() {
   $('h-meat').innerHTML = `<div class="h-ch"><h3>Meat schedule</h3></div><table class="h-tbl"><thead><tr><th>Day</th><th>Meat</th><th>Notes</th></tr></thead><tbody>${HD.map((d, i) => `<tr><td class="dn">${d}</td><td><input class="h-in" data-s="m" data-r="${i}" data-c="meat" value="${esc(H.meat[i].meat).replace(/"/g, '&quot;')}"></td><td><input class="h-in" data-s="m" data-r="${i}" data-c="notes" value="${esc(H.meat[i].notes).replace(/"/g, '&quot;')}"></td></tr>`).join('')}</tbody></table>`;
@@ -1193,7 +1228,7 @@ hEl.addEventListener('change', (e) => {
   const raw = i.value.trim(), v = raw === '' ? null : rd(k, raw), tgt = s === 'd' ? H.w[H.sel].days[r] : H.w[r].ov;
   if (raw !== '' && v == null) { i.classList.add('bad'); i.value = inStr(k, tgt[k]); setTimeout(() => i.classList.remove('bad'), 900); return; }
   tgt[k] = v; i.value = inStr(k, v);
-  if (s === 'd') { hFoot(); renderHMinis(); } else hCharts();
+  if (s === 'd') hFoot(); else hCharts();
   hSaveSoon();
 });
 hEl.addEventListener('keydown', (e) => {
@@ -1202,3 +1237,281 @@ hEl.addEventListener('keydown', (e) => {
   i.blur(); if (nx) nx.focus();
 });
 $('btn-health').onclick = () => showHealth();
+
+function rowMoves(c, ci) {
+  const T = S.tasks, same = T.categories.map((x, i) => i).filter((i) => (T.categories[i].row || 0) === (c.row || 0)), p = same.indexOf(ci), out = [];
+  const swap = (j) => { [T.categories[ci], T.categories[j]] = [T.categories[j], T.categories[ci]]; tChanged(); };
+  if (p > 0) out.push(['Move left', () => swap(same[p - 1])]);
+  if (p < same.length - 1) out.push(['Move right', () => swap(same[p + 1])]);
+  out.push([c.row ? 'Move to first row' : 'Move to second row', () => { c.row = c.row ? 0 : 1; tChanged(); }]);
+  return out;
+}
+
+/* ---------- finance (outgoing) ---------- */
+/* finance:data:start */
+const FCOL = ['#22d3ee', '#d62bd0', '#f59e0b', '#8b5cf6', '#34d399', '#fb7185', '#60a5fa', '#facc15'];
+const F = { ym: '', cur: '$', budget: null, cats: ['Food', 'Bills', 'Fun', 'Other'], tx: [], filter: '', q: '', months: {}, yearLoaded: '', created: false, saveT: null, loaded: false, draft: { date: '', cat: 'Food' }, geo: null, msg: '' };
+const ymNow = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`; };
+const ymAdd = (ym, k) => { const d = new Date(+ym.slice(0, 4), +ym.slice(5) - 1 + k, 1); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`; };
+const ymLabel = (ym) => new Date(+ym.slice(0, 4), +ym.slice(5) - 1, 1).toLocaleDateString('en', { month: 'long', year: 'numeric' });
+const dimOf = (ym) => new Date(+ym.slice(0, 4), +ym.slice(5), 0).getDate();
+const money = (v) => { if (v == null) return '–'; const a = Math.abs(v), s = Math.abs(a - Math.round(a)) < 0.005 ? Math.round(a).toLocaleString('en-US') : a.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return (v < 0 ? '−' : '') + F.cur + s; };
+const short = (v) => { const a = Math.abs(v); return (v < 0 ? '−' : '') + F.cur + (a >= 1e6 ? (a / 1e6).toFixed(1) + 'M' : a >= 1000 ? (a / 1000).toFixed(a >= 10000 ? 0 : 1) + 'k' : Math.round(a)); };
+const ea = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const fcol = (c) => { const i = F.cats.indexOf(c); return i < 0 ? '#6b7280' : FCOL[i % FCOL.length]; };
+const cleanCat = (s) => String(s || '').replace(/[,|]/g, ' ').trim();
+
+function parseF(text) {
+  const out = { cur: '$', budget: null, cats: [], tx: [] };
+  const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (fm) fm[1].split(/\r?\n/).forEach((l) => {
+    const m = l.match(/^(\w+):\s*(.*)$/); if (!m) return;
+    if (m[1] === 'currency') out.cur = m[2] || '$'; else if (m[1] === 'budget') out.budget = parseNum(m[2]);
+    else if (m[1] === 'categories') out.cats = m[2].split(',').map((s) => s.trim()).filter(Boolean);
+  });
+  let sec = '';
+  text.split(/\r?\n/).forEach((l) => {
+    let m; if ((m = l.match(/^## (.+)/))) { sec = m[1].trim().toLowerCase(); return; }
+    if (sec !== 'transactions' || !l.startsWith('|')) return;
+    const c = l.trim().replace(/^\||\|$/g, '').split('|').map((s) => s.trim());
+    if (/^\d{4}-\d{2}-\d{2}$/.test(c[0]) && parseNum(c[2]) != null) out.tx.push({ id: uid(), date: c[0], det: c[1] || '', amt: parseNum(c[2]), cat: c[3] || 'Other', note: c[4] || '' });
+  });
+  out.tx.forEach((t) => { if (!out.cats.includes(t.cat)) out.cats.push(t.cat); });
+  if (!out.cats.length) out.cats = ['Food', 'Bills', 'Fun', 'Other'];
+  return out;
+}
+function sumMonth(p) { const byCat = {}; let total = 0; p.tx.forEach((t) => { byCat[t.cat] = (byCat[t.cat] || 0) + t.amt; total += t.amt; }); return { total, byCat }; }
+function fStats() {
+  const dim = dimOf(F.ym), byDay = Array(dim).fill(0), byDow = Array(7).fill(0), byCat = {}, byPlace = {};
+  let total = 0, largest = null, count = 0;
+  F.tx.forEach((t) => {
+    if (t.date.slice(0, 7) !== F.ym) return;
+    count++; byDay[+t.date.slice(8, 10) - 1] += t.amt; byDow[(dn(t.date) + 3) % 7] += t.amt; byCat[t.cat] = (byCat[t.cat] || 0) + t.amt;
+    const pl = (t.det || '').trim() || '—'; byPlace[pl] = (byPlace[pl] || 0) + t.amt; total += t.amt; if (!largest || t.amt > largest.amt) largest = t;
+  });
+  const now = ymNow(), elapsed = F.ym < now ? dim : F.ym === now ? new Date().getDate() : 0;
+  return { dim, byDay, byDow, byCat, byPlace, total, largest, count, elapsed, avg: elapsed ? total / elapsed : null };
+}
+function toMdF() {
+  const st = fStats(), b = F.budget, pct = (v) => (st.total ? Math.round((v / st.total) * 100) : 0);
+  let o = `---\ntype: outgoing\nmonth: ${F.ym}\ncurrency: ${F.cur}\nbudget: ${b == null ? '' : b}\ncategories: ${F.cats.join(', ')}\n---\n# ${ymLabel(F.ym)} · Outgoing\n\n## Summary\n| Spent | Budget | Left to spend | Daily average | Transactions |\n|---|---|---|---|---|\n| ${money(st.total)} | ${b == null ? '' : money(b)} | ${b == null ? '' : money(b - st.total)} | ${st.avg == null ? '' : money(st.avg)} | ${st.count} |\n\n## Breakdown\n| Category | Total | % |\n|---|---|---|\n`;
+  F.cats.forEach((c) => { o += `| ${c} | ${money(st.byCat[c] || 0)} | ${pct(st.byCat[c] || 0)}% |\n`; });
+  o += '\n## Transactions\n| Date | Details | Amount | Category | Comment |\n|---|---|---|---|---|\n';
+  F.tx.map((t, i) => [t, i]).sort((a, b2) => a[0].date.localeCompare(b2[0].date) || a[1] - b2[1]).forEach(([t]) => { o += `| ${t.date} | ${pipe(t.det)} | ${t.amt} | ${t.cat} | ${pipe(t.note)} |\n`; });
+  return o;
+}
+/* finance:data:end */
+
+async function showFinance(ym) {
+  if (S.view === 'finance' && ym == null) { render(); return; }
+  if (F.saveT) await fSaveNow();
+  await loadFinance(ym || F.ym || ymNow());
+  setView('finance'); renderFinance(); loadYearStats();
+}
+async function loadFinance(ym) {
+  F.ym = ym; F.tx = []; F.filter = ''; F.q = ''; F.msg = ''; F.cats = ['Food', 'Bills', 'Fun', 'Other']; F.budget = null;
+  const text = await api.financeLoad(ym); F.created = !!text;
+  if (text) { const p = parseF(text); F.cur = p.cur; F.budget = p.budget; F.cats = p.cats; F.tx = p.tx; }
+  else for (let k = 1; k <= 12; k++) { const t = await api.financeLoad(ymAdd(ym, -k)); if (t) { const p = parseF(t); F.cur = p.cur; F.budget = p.budget; F.cats = p.cats; break; } }
+  F.draft = { date: ym === ymNow() ? `${ym}-${pad2(new Date().getDate())}` : `${ym}-01`, cat: F.cats[0] }; F.loaded = true;
+}
+async function fGo(ym) {
+  if (F.saveT) await fSaveNow();
+  const st = fStats(); F.months[F.ym] = { total: st.total, byCat: st.byCat };
+  await loadFinance(ym); renderFinance(); loadYearStats();
+}
+function fSaveSoon() { clearTimeout(F.saveT); F.saveT = setTimeout(fSaveNow, 500); }
+async function fSaveNow() { clearTimeout(F.saveT); F.saveT = null; await api.financeSave(F.ym, toMdF()); F.created = true; }
+window.addEventListener('beforeunload', () => { if (F.saveT) api.financeSave(F.ym, toMdF()); });
+async function loadYearStats() {
+  const y = F.ym.slice(0, 4); if (F.yearLoaded === y) return;
+  await Promise.all(Array.from({ length: 12 }, async (_, i) => { const ym = `${y}-${pad2(i + 1)}`; if (ym === F.ym) return; const t = await api.financeLoad(ym); F.months[ym] = t ? sumMonth(parseF(t)) : null; }));
+  F.yearLoaded = y;
+  if (S.view === 'finance' && F.ym.slice(0, 4) === y) { const c = $('f-c-year'); if (c) c.innerHTML = `<div class="h-ch"><h3>Month by month · ${y}</h3></div>${fYear()}`; }
+}
+
+function renderFinance() {
+  $('finance').innerHTML = `<div class="t-head"><div><h1>Finance</h1><div class="t-sub" id="f-sub"></div></div>
+    <div class="g-tools"><button data-f="prev">‹</button><b class="f-month">${ymLabel(F.ym)}</b><button data-f="next">›</button><button data-f="now">This month</button><label class="f-curl">Currency <input id="f-cur" value="${ea(F.cur)}" maxlength="4"></label></div></div>
+    <div class="f-scroll"><div class="h-stats" id="f-stats"></div><div class="p-card" id="f-add"></div><div class="f-charts" id="f-charts"></div><div class="p-card" id="f-tx"></div></div>`;
+  renderFAdd(); fRefresh();
+}
+function fRefresh() {
+  const st = fStats();
+  $('f-sub').textContent = F.msg || `${st.count} transaction${st.count === 1 ? '' : 's'} this month`; F.msg = '';
+  renderFStats(st); renderFCharts(st); renderFTx();
+}
+function renderFAdd() {
+  $('f-add').innerHTML = `<div class="f-addrow"><input type="date" id="f-ad" class="f-in" value="${F.draft.date}" min="${F.ym}-01" max="${F.ym}-${pad2(dimOf(F.ym))}"><input id="f-adet" class="f-in f-grow" placeholder="Details" autocomplete="off"><input id="f-aam" class="f-in f-amt" placeholder="Amount" inputmode="decimal" autocomplete="off"><input id="f-an" class="f-in f-grow" placeholder="Comment (optional)" autocomplete="off"><button class="g-primary" data-f="add">Add</button></div><div class="f-cats" id="f-cats"></div>`;
+  fCats();
+}
+function fCats() {
+  $('f-cats').innerHTML = F.cats.map((c) => `<button class="f-cat${F.draft.cat === c ? ' on' : ''}" data-f="pick" data-c="${ea(c)}" style="--c:${fcol(c)}"><i></i>${esc(c)}</button>`).join('') + '<button class="f-cat f-plus" data-f="newcat">+ Category</button>';
+}
+function fAdd() {
+  const amt = parseNum($('f-aam').value), date = $('f-ad').value;
+  if (amt == null || !date || date.slice(0, 7) !== F.ym) { const i = $('f-aam'); i.classList.add('bad'); setTimeout(() => i.classList.remove('bad'), 900); i.focus(); return; }
+  F.draft.date = date; F.tx.push({ id: uid(), date, det: $('f-adet').value.trim(), amt, cat: F.draft.cat, note: $('f-an').value.trim() });
+  $('f-adet').value = ''; $('f-aam').value = ''; $('f-an').value = ''; $('f-adet').focus();
+  fRefresh(); fSaveSoon();
+}
+
+function renderFStats(st) {
+  const b = F.budget, left = b == null ? null : b - st.total, pct = b ? st.total / b : null, cm = F.ym === ymNow();
+  const status = pct == null ? 'ok' : pct > 1 ? 'over' : pct > 0.85 ? 'warn' : 'ok', pace = st.avg != null && cm ? st.avg * st.dim : null;
+  $('f-stats').innerHTML = `
+    <div class="h-stat" style="--c:#d62bd0"><small>Spent</small><b>${money(st.total)}</b><small>${st.count} transaction${st.count === 1 ? '' : 's'}</small>${b ? `<div class="f-prog ${status}"><i style="width:${Math.min(100, pct * 100)}%"></i></div>` : ''}</div>
+    <div class="h-stat" style="--c:#8b5cf6"><small>Budget</small><input class="f-budget" value="${b == null ? '' : b}" placeholder="Set budget" inputmode="decimal"><small>${b == null ? 'optional' : Math.round(pct * 100) + '% used'}</small></div>
+    <div class="h-stat${left != null && left < 0 ? ' neg' : ''}" style="--c:#34d399"><small>Left to spend</small><b>${left == null ? '–' : money(left)}</b><small>${b == null ? 'set a budget to track it' : left < 0 ? 'over budget' : cm && st.elapsed ? money(left / Math.max(1, st.dim - st.elapsed + 1)) + ' per day left' : 'for the month'}</small></div>
+    <div class="h-stat" style="--c:#22d3ee"><small>Daily average</small><b>${money(st.avg)}</b><small>${st.elapsed ? `over ${st.elapsed} day${st.elapsed === 1 ? '' : 's'}` : 'no days yet'}</small></div>
+    <div class="h-stat" style="--c:#f59e0b">${pace != null ? `<small>On pace for</small><b>${money(pace)}</b><small>${b == null ? 'by month end' : pace > b ? money(pace - b) + ' over budget' : money(b - pace) + ' under budget'}</small>` : `<small>Biggest expense</small><b>${st.largest ? money(st.largest.amt) : '–'}</b><small>${st.largest ? esc(st.largest.det || st.largest.cat) : 'nothing yet'}</small>`}</div>`;
+}
+
+function fDaily(st) {
+  if (!st.total) return '<div class="h-empty">Add a transaction to see how the month is going.</div>';
+  const Wd = 900, Ht = 280, L = 58, R = 58, T = 14, Bm = 30, pw = Wd - L - R, ph = Ht - T - Bm, n = st.dim, step = pw / n, bw = Math.max(4, step * 0.62);
+  const mxB = Math.max(...st.byDay, 1); let run = 0; const cum = st.byDay.map((v) => (run += v));
+  const upto = st.elapsed || n, mxC = Math.max(run, F.budget || 0, 1);
+  const X = (i) => L + step * i + step / 2, Yb = (v) => T + ph - (v / mxB) * ph, Yc = (v) => T + ph - (v / mxC) * ph;
+  let s = '<defs><linearGradient id="fbar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f59e0b"/><stop offset="1" stop-color="#f59e0b" stop-opacity=".2"/></linearGradient></defs>';
+  for (let g = 0; g <= 4; g++) { const y = T + (g / 4) * ph; s += `<line x1="${L}" x2="${Wd - R}" y1="${y}" y2="${y}" class="h-grid-l"/><text x="${L - 8}" y="${y + 4}" text-anchor="end" class="h-ax" style="fill:#f59e0b">${short(mxB * (1 - g / 4))}</text><text x="${Wd - R + 8}" y="${y + 4}" class="h-ax" style="fill:#22d3ee">${short(mxC * (1 - g / 4))}</text>`; }
+  st.byDay.forEach((v, i) => { if (v > 0) s += `<rect x="${(X(i) - bw / 2).toFixed(1)}" y="${Yb(v).toFixed(1)}" width="${bw.toFixed(1)}" height="${(T + ph - Yb(v)).toFixed(1)}" rx="3" fill="url(#fbar)" style="filter:drop-shadow(0 0 4px #f59e0b66)"/>`; });
+  if (F.budget != null) s += `<line x1="${X(0).toFixed(1)}" y1="${Yc(F.budget / n).toFixed(1)}" x2="${X(n - 1).toFixed(1)}" y2="${Yc(F.budget).toFixed(1)}" stroke="#d62bd0" stroke-width="2" stroke-dasharray="6 6" style="filter:drop-shadow(0 0 4px #d62bd0)"/>`;
+  s += `<path d="M${cum.slice(0, upto).map((c, i) => `${X(i).toFixed(1)} ${Yc(c).toFixed(1)}`).join(' L')}" fill="none" stroke="#22d3ee" stroke-width="2.4" stroke-linejoin="round" style="filter:drop-shadow(0 0 5px #22d3ee)"/>`;
+  for (let i = 0; i < n; i += n > 20 ? 2 : 1) s += `<text x="${X(i).toFixed(1)}" y="${Ht - 10}" text-anchor="middle" class="h-ax">${i + 1}</text>`;
+  F.geo = { X, n, L, Wd, cum, byDay: st.byDay, Yc, step };
+  return `<div class="h-chart f-chart"><svg viewBox="0 0 ${Wd} ${Ht}">${s}<line id="f-vl" y1="${T}" y2="${T + ph}" class="h-vl" style="display:none"/><circle id="f-dot" r="5" fill="#22d3ee" stroke="#0a0a0f" stroke-width="2" style="display:none"/></svg><div class="h-tip"></div></div>`;
+}
+function bindFDaily() {
+  const box = $('f-charts').querySelector('.f-chart'); if (!box) return;
+  const svg = box.querySelector('svg'), tp = box.querySelector('.h-tip'), g = F.geo, vl = $('f-vl'), dot = $('f-dot');
+  box.onmousemove = (e) => {
+    const r = svg.getBoundingClientRect(), x = (e.clientX - r.left) * (g.Wd / r.width), i = Math.max(0, Math.min(g.n - 1, Math.floor((x - g.L) / g.step))), gx = g.X(i);
+    vl.setAttribute('x1', gx); vl.setAttribute('x2', gx); vl.style.display = ''; dot.setAttribute('cx', gx); dot.setAttribute('cy', g.Yc(g.cum[i])); dot.style.display = '';
+    const dl = `${HD[(dn(`${F.ym}-${pad2(i + 1)}`) + 3) % 7]} ${i + 1}`;
+    tp.innerHTML = `<strong>${dl}</strong><div><i style="background:#f59e0b"></i>Spent <b>${money(g.byDay[i])}</b></div><div><i style="background:#22d3ee"></i>Running total <b>${money(g.cum[i])}</b></div>` + (F.budget != null ? `<div><i style="background:#d62bd0"></i>Budget pace <b>${money(F.budget * (i + 1) / g.n)}</b></div>` : '');
+    tp.style.display = 'block'; const px = (gx / g.Wd) * r.width; tp.style.left = (px > r.width - 240 ? px - tp.offsetWidth - 14 : px + 14) + 'px';
+  };
+  box.onmouseleave = () => { tp.style.display = 'none'; vl.style.display = 'none'; dot.style.display = 'none'; };
+}
+function fDonut(st) {
+  const cats = Object.keys(st.byCat).filter((c) => st.byCat[c] > 0).sort((a, b) => st.byCat[b] - st.byCat[a]);
+  if (!st.total || !cats.length) return '<div class="h-empty">No spending yet.</div>';
+  const C = 2 * Math.PI * 70; let off = 0, seg = '';
+  cats.forEach((c) => {
+    const v = st.byCat[c], len = (v / st.total) * C;
+    seg += `<circle class="f-slice${F.filter === c ? ' on' : ''}" data-f="cat" data-c="${ea(c)}" cx="100" cy="100" r="70" fill="none" stroke="${fcol(c)}" stroke-width="24" stroke-dasharray="${Math.max(len - 2, 0.5).toFixed(1)} ${C.toFixed(1)}" stroke-dashoffset="${(-off).toFixed(1)}" transform="rotate(-90 100 100)" style="filter:drop-shadow(0 0 5px ${fcol(c)}77)"><title>${esc(c)} · ${money(v)}</title></circle>`; off += len;
+  });
+  const legend = [...cats, ...F.cats.filter((c) => !cats.includes(c))].map((c) => `<div class="f-leg${F.filter === c ? ' on' : ''}" data-f="cat" data-c="${ea(c)}" style="--c:${fcol(c)}"><i></i><span>${esc(c)}</span><b>${money(st.byCat[c] || 0)}</b><em>${Math.round((st.byCat[c] || 0) / st.total * 100)}%</em><u style="width:${((st.byCat[c] || 0) / st.total * 100).toFixed(1)}%"></u></div>`).join('');
+  return `<div class="f-donut"><svg viewBox="0 0 200 200"><circle cx="100" cy="100" r="70" fill="none" stroke="#1b1b27" stroke-width="24"/>${seg}<text x="100" y="100" text-anchor="middle" class="f-dc">${short(st.total)}</text><text x="100" y="118" text-anchor="middle" class="h-ax">spent</text></svg><div class="f-legend">${legend}</div></div>`;
+}
+function fPlaces(st) {
+  const e = Object.entries(st.byPlace).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  if (!e.length) return '<div class="h-empty">Nothing yet.</div>';
+  return `<div class="f-places">${e.map(([n, v]) => `<div class="f-pl"><span>${esc(n)}</span><b>${money(v)}</b><u style="width:${(v / e[0][1] * 100).toFixed(1)}%"></u></div>`).join('')}</div>`;
+}
+function fHeat(st) {
+  const off = (dn(`${F.ym}-01`) + 3) % 7, mx = Math.max(...st.byDay, 1), now = ymNow() === F.ym ? new Date().getDate() : 0;
+  let cells = HD.map((d) => `<div class="f-hd">${d[0]}</div>`).join('') + '<i></i>'.repeat(off);
+  st.byDay.forEach((v, i) => { cells += `<div class="f-day${i + 1 === now ? ' now' : ''}" title="${i + 1} · ${money(v)}" style="${v ? `background:color-mix(in srgb,var(--pa) ${Math.round(12 + (v / mx) * 78)}%,#1b1b27)` : ''}"><span>${i + 1}</span>${v ? `<small>${short(v)}</small>` : ''}</div>`; });
+  return `<div class="f-heat">${cells}</div>`;
+}
+function fYear() {
+  const y = F.ym.slice(0, 4), st = fStats(), data = Array.from({ length: 12 }, (_, i) => { const ym = `${y}-${pad2(i + 1)}`; return ym === F.ym ? { total: st.total, byCat: st.byCat } : F.months[ym] || null; });
+  const mx = Math.max(...data.map((d) => (d ? d.total : 0)), 1), Wd = 900, Ht = 240, L = 54, T = 12, Bm = 26, ph = Ht - T - Bm, step = (Wd - L - 10) / 12, bw = Math.min(46, step * 0.62);
+  let s = '';
+  for (let g = 0; g <= 3; g++) { const yy = T + (g / 3) * ph; s += `<line x1="${L}" x2="${Wd - 6}" y1="${yy}" y2="${yy}" class="h-grid-l"/><text x="${L - 8}" y="${yy + 4}" text-anchor="end" class="h-ax">${short(mx * (1 - g / 3))}</text>`; }
+  data.forEach((d, i) => {
+    const cx = L + step * i + step / 2, ym = `${y}-${pad2(i + 1)}`; let yy = T + ph;
+    if (d && d.total > 0) {
+      const known = F.cats.reduce((a, c) => a + (d.byCat[c] || 0), 0), parts = F.cats.map((c) => [c, d.byCat[c] || 0]).concat([['Uncategorised', d.total - known]]);
+      parts.forEach(([c, v]) => { if (v <= 0.005) return; const h = (v / mx) * ph; yy -= h; s += `<rect x="${(cx - bw / 2).toFixed(1)}" y="${yy.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(h - 1, 0.5).toFixed(1)}" fill="${F.cats.includes(c) ? fcol(c) : '#6b7280'}" opacity="${ym === F.ym ? 1 : 0.72}"><title>${ymLabel(ym)} · ${esc(c)} ${money(v)}</title></rect>`; });
+    }
+    s += `<rect data-f="goto" data-ym="${ym}" x="${(cx - step / 2).toFixed(1)}" y="${T}" width="${step.toFixed(1)}" height="${ph + Bm}" fill="${ym === F.ym ? '#ffffff0a' : 'transparent'}" style="cursor:pointer"><title>${ymLabel(ym)}${d ? ' · ' + money(d.total) : ''}</title></rect><text x="${cx.toFixed(1)}" y="${Ht - 8}" text-anchor="middle" class="h-ax" style="${ym === F.ym ? 'fill:#fff' : ''}">${new Date(2000, i, 1).toLocaleDateString('en', { month: 'short' })}</text>`;
+  });
+  return `<svg viewBox="0 0 ${Wd} ${Ht}" class="h-svg">${s}</svg>`;
+}
+function renderFCharts(st) {
+  $('f-charts').innerHTML = `
+    <div class="p-card f-wide"><div class="h-ch"><h3>Daily spending</h3><span class="h-hint">bars: per day · line: running total${F.budget != null ? ' · dashed: budget pace' : ''}</span></div>${fDaily(st)}</div>
+    <div class="p-card"><div class="h-ch"><h3>Where it goes</h3><span class="h-hint">click to filter</span></div>${fDonut(st)}</div>
+    <div class="p-card"><div class="h-ch"><h3>By day of week</h3></div>${st.total ? bars(st.byDow, HD, '#22d3ee', short) : '<div class="h-empty">Nothing yet.</div>'}</div>
+    <div class="p-card"><div class="h-ch"><h3>Top places</h3></div>${fPlaces(st)}</div>
+    <div class="p-card"><div class="h-ch"><h3>Month at a glance</h3></div>${fHeat(st)}</div>
+    <div class="p-card f-wide" id="f-c-year"><div class="h-ch"><h3>Month by month · ${F.ym.slice(0, 4)}</h3><span class="h-hint">click a month to open it</span></div>${fYear()}</div>`;
+  bindFDaily();
+}
+
+function renderFTx() {
+  const chips = [['', 'All'], ...F.cats.map((c) => [c, c])].map(([c, l]) => `<button class="f-cat${F.filter === c ? ' on' : ''}" data-f="filter" data-c="${ea(c)}" style="--c:${c ? fcol(c) : '#ffffff'}"><i></i>${esc(l)}</button>`).join('');
+  $('f-tx').innerHTML = `<div class="h-ch"><h3>Transactions</h3><span class="h-hint" id="f-shown"></span><div class="h-chips">${chips}</div><input class="f-in f-search" placeholder="Search" value="${ea(F.q)}"><button data-f="paste">Paste from Sheets</button></div>
+    <div class="f-txs"><table class="h-tbl f-tbl"><thead><tr><th>Date</th><th>Details</th><th>Amount</th><th>Category</th><th>Comment</th><th></th></tr></thead><tbody id="f-rows"></tbody></table></div>`;
+  renderFRows();
+}
+function renderFRows() {
+  const q = F.q.toLowerCase(), max = pad2(dimOf(F.ym));
+  const rows = F.tx.map((t, i) => [t, i]).filter(([t]) => (!F.filter || t.cat === F.filter) && (!q || `${t.det} ${t.note}`.toLowerCase().includes(q))).sort((a, b) => a[0].date.localeCompare(b[0].date) || a[1] - b[1]);
+  $('f-rows').innerHTML = rows.map(([t]) => `<tr data-id="${t.id}"><td><input type="date" class="f-in" data-k="date" value="${t.date}" min="${F.ym}-01" max="${F.ym}-${max}"></td><td><input class="f-in" data-k="det" value="${ea(t.det)}"></td><td><input class="f-in f-num" data-k="amt" value="${t.amt}"></td><td><select class="f-in f-sel" data-k="cat" style="--c:${fcol(t.cat)}">${F.cats.map((c) => `<option${c === t.cat ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select></td><td><input class="f-in" data-k="note" value="${ea(t.note)}"></td><td><button class="f-x" data-f="del" title="Delete">×</button></td></tr>`).join('') || '<tr><td colspan="6" class="h-empty">No transactions to show.</td></tr>';
+  $('f-shown').textContent = `${rows.length} shown · ${money(rows.reduce((a, [t]) => a + t.amt, 0))}`;
+}
+
+function fPaste() {
+  const ov = document.createElement('div'); ov.className = 't-modal';
+  ov.innerHTML = `<div class="t-card g-card"><h3>Paste from Google Sheets</h3><div class="t-for">Copy rows (Date, Details, Amount, Category, Comment) and paste them here. Dates like "01, Thursday" are read as that day of this month.</div><textarea style="height:180px"></textarea><div class="t-actions"><span></span><button data-a="x">Cancel</button><button class="primary" data-a="ok">Import</button></div></div>`;
+  const ta = ov.querySelector('textarea'), close = () => ov.remove();
+  const ok = () => {
+    let n = 0, skipped = 0;
+    ta.value.split(/\r?\n/).forEach((line) => {
+      if (!line.trim()) return;
+      const c = line.split('\t').map((s) => s.trim()), amt = parseNum((c[2] || '').replace(/[^\d.\-,]/g, '')), dm = (c[0] || '').match(/^(\d{4}-\d{2}-\d{2})|^(\d{1,2})/);
+      if (amt == null || !dm) { skipped++; return; }
+      const date = dm[1] || `${F.ym}-${pad2(+dm[2])}`, day = +date.slice(8, 10);
+      if (date.slice(0, 7) !== F.ym || day < 1 || day > dimOf(F.ym)) { skipped++; return; }
+      let cat = cleanCat(c[3]); const hit = F.cats.find((x) => x.toLowerCase() === cat.toLowerCase());
+      if (hit) cat = hit; else if (cat) F.cats.push(cat); else cat = F.cats[F.cats.length - 1];
+      F.tx.push({ id: uid(), date, det: c[1] || '', amt, cat, note: c[4] || '' }); n++;
+    });
+    close(); renderFAdd(); F.msg = `Imported ${n} row${n === 1 ? '' : 's'}${skipped ? `, skipped ${skipped}` : ''}`; fRefresh(); fSaveSoon();
+  };
+  ov.onclick = (e) => { if (e.target === ov) close(); const a = e.target.dataset && e.target.dataset.a; if (a === 'x') close(); if (a === 'ok') ok(); };
+  ov.onkeydown = (e) => { if (e.key === 'Escape') close(); };
+  document.body.appendChild(ov); ta.focus();
+}
+
+const fEl = $('finance');
+fEl.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-f]'); if (!el) return; const a = el.dataset.f;
+  if (a === 'prev' || a === 'next') fGo(ymAdd(F.ym, a === 'next' ? 1 : -1));
+  else if (a === 'now') fGo(ymNow());
+  else if (a === 'goto') { if (el.dataset.ym !== F.ym) fGo(el.dataset.ym); }
+  else if (a === 'add') fAdd();
+  else if (a === 'pick') { F.draft.cat = el.dataset.c; fCats(); }
+  else if (a === 'newcat') {
+    const i = document.createElement('input'); i.className = 'f-in f-newcat'; i.placeholder = 'Category name'; el.replaceWith(i); i.focus(); let done = false;
+    const fin = (ok) => {
+      if (done) return; done = true; const v = cleanCat(i.value);
+      if (ok && v && !F.cats.some((c) => c.toLowerCase() === v.toLowerCase())) { F.cats.push(v); F.draft.cat = v; fSaveSoon(); fCats(); fRefresh(); } else fCats();
+    };
+    i.onkeydown = (ev) => { ev.stopPropagation(); if (ev.key === 'Enter') fin(true); if (ev.key === 'Escape') fin(false); }; i.onblur = () => fin(true);
+  }
+  else if (a === 'cat' || a === 'filter') { const c = el.dataset.c || ''; F.filter = F.filter === c ? '' : c; fRefresh(); }
+  else if (a === 'del') { const id = el.closest('tr').dataset.id; F.tx = F.tx.filter((t) => t.id !== id); fRefresh(); fSaveSoon(); }
+  else if (a === 'paste') fPaste();
+});
+fEl.addEventListener('change', (e) => {
+  const i = e.target;
+  if (i.classList.contains('f-budget')) { F.budget = parseNum(i.value); fSaveSoon(); fRefresh(); return; }
+  if (i.id === 'f-cur') { F.cur = i.value.trim() || '$'; fSaveSoon(); fRefresh(); return; }
+  if (!i.dataset.k || !i.closest('#f-tx')) return;
+  const t = F.tx.find((x) => x.id === i.closest('tr').dataset.id), k = i.dataset.k; if (!t) return;
+  if (k === 'amt') { const v = parseNum(i.value); if (v == null) { i.value = t.amt; return; } t.amt = v; i.value = v; }
+  else if (k === 'date') { if (!i.value || i.value.slice(0, 7) !== F.ym) { i.value = t.date; return; } t.date = i.value; }
+  else t[k] = i.value.trim();
+  fSaveSoon(); const st = fStats(); renderFStats(st); renderFCharts(st); renderFRows();
+});
+fEl.addEventListener('input', (e) => { if (e.target.classList.contains('f-search')) { F.q = e.target.value; renderFRows(); } });
+fEl.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || e.target.tagName !== 'INPUT' || e.target.classList.contains('f-newcat')) return;
+  if (e.target.closest('#f-add')) fAdd(); else if (e.target.dataset.k || e.target.classList.contains('f-budget') || e.target.id === 'f-cur') e.target.blur();
+});
+$('btn-finance').onclick = () => showFinance();
