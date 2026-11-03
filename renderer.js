@@ -872,10 +872,10 @@ function renderPomo() {
         <input class="p-task" placeholder="What are you focusing on?" value="${esc(P.task).replace(/"/g, '&quot;')}" spellcheck="false">
       </div>
       <aside class="p-side">
-        <div class="p-card"><h3>Look</h3><div class="p-styles">${STY.map(([k, l]) => `<button class="p-sty${c.style === k ? ' on' : ''}" data-sty="${k}">${l}</button>`).join('')}</div></div>
         <div class="p-card"><h3>Timer</h3>${step('focus', 'Focus', ' min')}${step('short', 'Short break', ' min')}${step('long', 'Long break', ' min')}${step('rounds', 'Rounds before long break', '')}</div>
         <div class="p-card"><h3>Automation &amp; alerts</h3>${sw('autoBreak', 'Auto-start breaks')}${sw('autoFocus', 'Auto-start focus')}${sw('sound', 'Chime when done')}${sw('notify', 'Desktop notification')}</div>
         <div class="p-card"><h3>Your focus</h3><div class="p-stats"><div class="p-stat"><b>${st.n}</b><small>sessions today</small></div><div class="p-stat"><b>${st.min}</b><small>minutes today</small></div></div><div class="p-week">${week}</div></div>
+        <div class="p-card"><h3>Look</h3><select class="p-sel">${STY.map(([k, l]) => `<option value="${k}"${c.style === k ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
       </aside>
     </div>`;
   updPomo();
@@ -924,6 +924,7 @@ $('pomo').addEventListener('click', (e) => {
   else if (b.id === 'p-reset') resetT();
   else if (b.id === 'p-skip') advance(false);
 });
+$('pomo').addEventListener('change', (e) => { if (e.target.classList.contains('p-sel')) { P.cfg.style = e.target.value; pSaveSoon(); renderPomo(); } });
 $('pomo').addEventListener('input', (e) => { if (e.target.classList.contains('p-task')) P.task = e.target.value; });
 document.addEventListener('keydown', (e) => {
   if (S.view !== 'pomo' || e.code !== 'Space' || /INPUT|TEXTAREA|BUTTON|SELECT/.test(e.target.tagName)) return;
@@ -1250,7 +1251,7 @@ function rowMoves(c, ci) {
 /* ---------- finance (outgoing) ---------- */
 /* finance:data:start */
 const FCOL = ['#22d3ee', '#d62bd0', '#f59e0b', '#8b5cf6', '#34d399', '#fb7185', '#60a5fa', '#facc15'];
-const F = { ym: '', cur: '$', budget: null, cats: ['Food', 'Bills', 'Fun', 'Other'], tx: [], filter: '', q: '', months: {}, yearLoaded: '', created: false, saveT: null, loaded: false, draft: { date: '', cat: 'Food' }, geo: null, msg: '' };
+const F = { ym: '', cur: '$', cats: ['Food', 'Bills', 'Fun', 'Other'], tx: [], filter: '', cache: {}, saveT: null, draft: { date: '', cat: 'Food' }, geo: null, msg: '' };
 const ymNow = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`; };
 const ymAdd = (ym, k) => { const d = new Date(+ym.slice(0, 4), +ym.slice(5) - 1 + k, 1); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`; };
 const ymLabel = (ym) => new Date(+ym.slice(0, 4), +ym.slice(5) - 1, 1).toLocaleDateString('en', { month: 'long', year: 'numeric' });
@@ -1262,12 +1263,11 @@ const fcol = (c) => { const i = F.cats.indexOf(c); return i < 0 ? '#6b7280' : FC
 const cleanCat = (s) => String(s || '').replace(/[,|]/g, ' ').trim();
 
 function parseF(text) {
-  const out = { cur: '$', budget: null, cats: [], tx: [] };
+  const out = { cur: '$', cats: [], tx: [] };
   const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (fm) fm[1].split(/\r?\n/).forEach((l) => {
     const m = l.match(/^(\w+):\s*(.*)$/); if (!m) return;
-    if (m[1] === 'currency') out.cur = m[2] || '$'; else if (m[1] === 'budget') out.budget = parseNum(m[2]);
-    else if (m[1] === 'categories') out.cats = m[2].split(',').map((s) => s.trim()).filter(Boolean);
+    if (m[1] === 'currency') out.cur = m[2] || '$'; else if (m[1] === 'categories') out.cats = m[2].split(',').map((s) => s.trim()).filter(Boolean);
   });
   let sec = '';
   text.split(/\r?\n/).forEach((l) => {
@@ -1280,24 +1280,37 @@ function parseF(text) {
   if (!out.cats.length) out.cats = ['Food', 'Bills', 'Fun', 'Other'];
   return out;
 }
-function sumMonth(p) { const byCat = {}; let total = 0; p.tx.forEach((t) => { byCat[t.cat] = (byCat[t.cat] || 0) + t.amt; total += t.amt; }); return { total, byCat }; }
 function fStats() {
-  const dim = dimOf(F.ym), byDay = Array(dim).fill(0), byDow = Array(7).fill(0), byCat = {}, byPlace = {};
-  let total = 0, largest = null, count = 0;
+  const dim = dimOf(F.ym), byDay = Array(dim).fill(0), byDow = Array(7).fill(0), byCat = {};
+  let total = 0, count = 0;
   F.tx.forEach((t) => {
     if (t.date.slice(0, 7) !== F.ym) return;
-    count++; byDay[+t.date.slice(8, 10) - 1] += t.amt; byDow[(dn(t.date) + 3) % 7] += t.amt; byCat[t.cat] = (byCat[t.cat] || 0) + t.amt;
-    const pl = (t.det || '').trim() || '—'; byPlace[pl] = (byPlace[pl] || 0) + t.amt; total += t.amt; if (!largest || t.amt > largest.amt) largest = t;
+    count++; byDay[+t.date.slice(8, 10) - 1] += t.amt; byDow[(dn(t.date) + 3) % 7] += t.amt; byCat[t.cat] = (byCat[t.cat] || 0) + t.amt; total += t.amt;
   });
-  const now = ymNow(), elapsed = F.ym < now ? dim : F.ym === now ? new Date().getDate() : 0;
-  return { dim, byDay, byDow, byCat, byPlace, total, largest, count, elapsed, avg: elapsed ? total / elapsed : null };
+  return { dim, byDay, byDow, byCat, total, count };
+}
+const monthsBetween = (a, b) => { const out = []; for (let n = a; n <= b; n++) { const ym = ds(n).slice(0, 7); if (!out.includes(ym)) out.push(ym); } return out; };
+function avg30Range() {
+  const now = ymNow(); if (F.ym > now) return null;
+  const end = F.ym === now ? todayN() : dn(`${F.ym}-${pad2(dimOf(F.ym))}`);
+  return [end - 29, end];
+}
+function calcAvg30() {
+  const r = avg30Range(); if (!r) return null;
+  let total = 0, missing = false;
+  monthsBetween(r[0], r[1]).forEach((ym) => {
+    const tx = ym === F.ym ? F.tx : F.cache[ym];
+    if (tx === undefined) { missing = true; return; }
+    tx.forEach((t) => { const d = dn(t.date); if (d >= r[0] && d <= r[1]) total += t.amt; });
+  });
+  return { avg: total / 30, missing, end: r[1] };
 }
 function toMdF() {
-  const st = fStats(), b = F.budget, pct = (v) => (st.total ? Math.round((v / st.total) * 100) : 0);
-  let o = `---\ntype: outgoing\nmonth: ${F.ym}\ncurrency: ${F.cur}\nbudget: ${b == null ? '' : b}\ncategories: ${F.cats.join(', ')}\n---\n# ${ymLabel(F.ym)} · Outgoing\n\n## Summary\n| Spent | Budget | Left to spend | Daily average | Transactions |\n|---|---|---|---|---|\n| ${money(st.total)} | ${b == null ? '' : money(b)} | ${b == null ? '' : money(b - st.total)} | ${st.avg == null ? '' : money(st.avg)} | ${st.count} |\n\n## Breakdown\n| Category | Total | % |\n|---|---|---|\n`;
+  const st = fStats(), a = calcAvg30(), pct = (v) => (st.total ? Math.round((v / st.total) * 100) : 0);
+  let o = `---\ntype: outgoing\nmonth: ${F.ym}\ncurrency: ${F.cur}\ncategories: ${F.cats.join(', ')}\n---\n# ${ymLabel(F.ym)} · Outgoing\n\n## Summary\n| Spent this month | Daily average (last 30 days) | Transactions |\n|---|---|---|\n| ${money(st.total)} | ${a && !a.missing ? money(a.avg) : ''} | ${st.count} |\n\n## Breakdown\n| Category | Total | % |\n|---|---|---|\n`;
   F.cats.forEach((c) => { o += `| ${c} | ${money(st.byCat[c] || 0)} | ${pct(st.byCat[c] || 0)}% |\n`; });
   o += '\n## Transactions\n| Date | Details | Amount | Category | Comment |\n|---|---|---|---|---|\n';
-  F.tx.map((t, i) => [t, i]).sort((a, b2) => a[0].date.localeCompare(b2[0].date) || a[1] - b2[1]).forEach(([t]) => { o += `| ${t.date} | ${pipe(t.det)} | ${t.amt} | ${t.cat} | ${pipe(t.note)} |\n`; });
+  F.tx.map((t, i) => [t, i]).sort((x, y) => x[0].date.localeCompare(y[0].date) || x[1] - y[1]).forEach(([t]) => { o += `| ${t.date} | ${pipe(t.det)} | ${t.amt} | ${t.cat} | ${pipe(t.note)} |\n`; });
   return o;
 }
 /* finance:data:end */
@@ -1305,48 +1318,46 @@ function toMdF() {
 async function showFinance(ym) {
   if (S.view === 'finance' && ym == null) { render(); return; }
   if (F.saveT) await fSaveNow();
-  await loadFinance(ym || F.ym || ymNow());
-  setView('finance'); renderFinance(); loadYearStats();
+  F.cache = {}; await loadFinance(ym || F.ym || ymNow());
+  setView('finance'); renderFinance(); fFillCache();
 }
 async function loadFinance(ym) {
-  F.ym = ym; F.tx = []; F.filter = ''; F.q = ''; F.msg = ''; F.cats = ['Food', 'Bills', 'Fun', 'Other']; F.budget = null;
-  const text = await api.financeLoad(ym); F.created = !!text;
-  if (text) { const p = parseF(text); F.cur = p.cur; F.budget = p.budget; F.cats = p.cats; F.tx = p.tx; }
-  else for (let k = 1; k <= 12; k++) { const t = await api.financeLoad(ymAdd(ym, -k)); if (t) { const p = parseF(t); F.cur = p.cur; F.budget = p.budget; F.cats = p.cats; break; } }
-  F.draft = { date: ym === ymNow() ? `${ym}-${pad2(new Date().getDate())}` : `${ym}-01`, cat: F.cats[0] }; F.loaded = true;
+  F.ym = ym; F.tx = []; F.filter = ''; F.msg = ''; F.cats = ['Food', 'Bills', 'Fun', 'Other'];
+  const text = await api.financeLoad(ym);
+  if (text) { const p = parseF(text); F.cur = p.cur; F.cats = p.cats; F.tx = p.tx; }
+  else for (let k = 1; k <= 12; k++) { const t = await api.financeLoad(ymAdd(ym, -k)); if (t) { const p = parseF(t); F.cur = p.cur; F.cats = p.cats; break; } }
+  F.draft = { date: ym === ymNow() ? `${ym}-${pad2(new Date().getDate())}` : `${ym}-01`, cat: F.cats[0] };
 }
 async function fGo(ym) {
   if (F.saveT) await fSaveNow();
-  const st = fStats(); F.months[F.ym] = { total: st.total, byCat: st.byCat };
-  await loadFinance(ym); renderFinance(); loadYearStats();
+  F.cache[F.ym] = F.tx.slice(); await loadFinance(ym); renderFinance(); fFillCache();
+}
+async function fFillCache() {
+  const r = avg30Range(); if (!r) return; const ym0 = F.ym; let loaded = false;
+  for (const ym of monthsBetween(r[0], r[1])) if (ym !== F.ym && F.cache[ym] === undefined) { const t = await api.financeLoad(ym); F.cache[ym] = t ? parseF(t).tx : []; loaded = true; }
+  if (loaded && S.view === 'finance' && F.ym === ym0) renderFStats(fStats());
 }
 function fSaveSoon() { clearTimeout(F.saveT); F.saveT = setTimeout(fSaveNow, 500); }
-async function fSaveNow() { clearTimeout(F.saveT); F.saveT = null; await api.financeSave(F.ym, toMdF()); F.created = true; }
+async function fSaveNow() { clearTimeout(F.saveT); F.saveT = null; await api.financeSave(F.ym, toMdF()); }
 window.addEventListener('beforeunload', () => { if (F.saveT) api.financeSave(F.ym, toMdF()); });
-async function loadYearStats() {
-  const y = F.ym.slice(0, 4); if (F.yearLoaded === y) return;
-  await Promise.all(Array.from({ length: 12 }, async (_, i) => { const ym = `${y}-${pad2(i + 1)}`; if (ym === F.ym) return; const t = await api.financeLoad(ym); F.months[ym] = t ? sumMonth(parseF(t)) : null; }));
-  F.yearLoaded = y;
-  if (S.view === 'finance' && F.ym.slice(0, 4) === y) { const c = $('f-c-year'); if (c) c.innerHTML = `<div class="h-ch"><h3>Month by month · ${y}</h3></div>${fYear()}`; }
-}
 
 function renderFinance() {
   $('finance').innerHTML = `<div class="t-head"><div><h1>Finance</h1><div class="t-sub" id="f-sub"></div></div>
     <div class="g-tools"><button data-f="prev">‹</button><b class="f-month">${ymLabel(F.ym)}</b><button data-f="next">›</button><button data-f="now">This month</button><label class="f-curl">Currency <input id="f-cur" value="${ea(F.cur)}" maxlength="4"></label></div></div>
-    <div class="f-scroll"><div class="h-stats" id="f-stats"></div><div class="p-card" id="f-add"></div><div class="f-charts" id="f-charts"></div><div class="p-card" id="f-tx"></div></div>`;
+    <div class="f-scroll"><div class="f-stats2" id="f-stats"></div><div class="p-card" id="f-add"></div><div class="f-charts" id="f-charts"></div><div class="p-card" id="f-tx"></div><div class="p-card" id="f-glance"></div></div>`;
   renderFAdd(); fRefresh();
 }
 function fRefresh() {
   const st = fStats();
   $('f-sub').textContent = F.msg || `${st.count} transaction${st.count === 1 ? '' : 's'} this month`; F.msg = '';
-  renderFStats(st); renderFCharts(st); renderFTx();
+  renderFStats(st); renderFCharts(st); renderFTx(); renderFGlance(st);
 }
 function renderFAdd() {
   $('f-add').innerHTML = `<div class="f-addrow"><input type="date" id="f-ad" class="f-in" value="${F.draft.date}" min="${F.ym}-01" max="${F.ym}-${pad2(dimOf(F.ym))}"><input id="f-adet" class="f-in f-grow" placeholder="Details" autocomplete="off"><input id="f-aam" class="f-in f-amt" placeholder="Amount" inputmode="decimal" autocomplete="off"><input id="f-an" class="f-in f-grow" placeholder="Comment (optional)" autocomplete="off"><button class="g-primary" data-f="add">Add</button></div><div class="f-cats" id="f-cats"></div>`;
   fCats();
 }
 function fCats() {
-  $('f-cats').innerHTML = F.cats.map((c) => `<button class="f-cat${F.draft.cat === c ? ' on' : ''}" data-f="pick" data-c="${ea(c)}" style="--c:${fcol(c)}"><i></i>${esc(c)}</button>`).join('') + '<button class="f-cat f-plus" data-f="newcat">+ Category</button>';
+  $('f-cats').innerHTML = F.cats.map((c) => `<button class="f-cat${F.draft.cat === c ? ' on' : ''}" data-f="pick" data-c="${ea(c)}" style="--c:${fcol(c)}" title="Right-click to rename"><i></i>${esc(c)}</button>`).join('');
 }
 function fAdd() {
   const amt = parseNum($('f-aam').value), date = $('f-ad').value;
@@ -1357,26 +1368,21 @@ function fAdd() {
 }
 
 function renderFStats(st) {
-  const b = F.budget, left = b == null ? null : b - st.total, pct = b ? st.total / b : null, cm = F.ym === ymNow();
-  const status = pct == null ? 'ok' : pct > 1 ? 'over' : pct > 0.85 ? 'warn' : 'ok', pace = st.avg != null && cm ? st.avg * st.dim : null;
+  const a = calcAvg30(), cm = F.ym === ymNow(), mname = new Date(+F.ym.slice(0, 4), +F.ym.slice(5) - 1, 1).toLocaleDateString('en', { month: 'long' });
   $('f-stats').innerHTML = `
-    <div class="h-stat" style="--c:#d62bd0"><small>Spent</small><b>${money(st.total)}</b><small>${st.count} transaction${st.count === 1 ? '' : 's'}</small>${b ? `<div class="f-prog ${status}"><i style="width:${Math.min(100, pct * 100)}%"></i></div>` : ''}</div>
-    <div class="h-stat" style="--c:#8b5cf6"><small>Budget</small><input class="f-budget" value="${b == null ? '' : b}" placeholder="Set budget" inputmode="decimal"><small>${b == null ? 'optional' : Math.round(pct * 100) + '% used'}</small></div>
-    <div class="h-stat${left != null && left < 0 ? ' neg' : ''}" style="--c:#34d399"><small>Left to spend</small><b>${left == null ? '–' : money(left)}</b><small>${b == null ? 'set a budget to track it' : left < 0 ? 'over budget' : cm && st.elapsed ? money(left / Math.max(1, st.dim - st.elapsed + 1)) + ' per day left' : 'for the month'}</small></div>
-    <div class="h-stat" style="--c:#22d3ee"><small>Daily average</small><b>${money(st.avg)}</b><small>${st.elapsed ? `over ${st.elapsed} day${st.elapsed === 1 ? '' : 's'}` : 'no days yet'}</small></div>
-    <div class="h-stat" style="--c:#f59e0b">${pace != null ? `<small>On pace for</small><b>${money(pace)}</b><small>${b == null ? 'by month end' : pace > b ? money(pace - b) + ' over budget' : money(b - pace) + ' under budget'}</small>` : `<small>Biggest expense</small><b>${st.largest ? money(st.largest.amt) : '–'}</b><small>${st.largest ? esc(st.largest.det || st.largest.cat) : 'nothing yet'}</small>`}</div>`;
+    <div class="h-stat" style="--c:#d62bd0"><small>${cm ? 'Spent this month' : 'Spent in ' + mname}</small><b>${money(st.total)}</b><small>${st.count} transaction${st.count === 1 ? '' : 's'}</small></div>
+    <div class="h-stat" style="--c:#22d3ee"><small>Daily average</small><b>${a ? (a.missing ? '…' : money(a.avg)) : '–'}</b><small>${a ? (cm ? 'over the last 30 days' : `30 days up to ${dayLbl(a.end)}`) : 'no data for future months'}</small></div>`;
 }
 
 function fDaily(st) {
   if (!st.total) return '<div class="h-empty">Add a transaction to see how the month is going.</div>';
   const Wd = 900, Ht = 280, L = 58, R = 58, T = 14, Bm = 30, pw = Wd - L - R, ph = Ht - T - Bm, n = st.dim, step = pw / n, bw = Math.max(4, step * 0.62);
   const mxB = Math.max(...st.byDay, 1); let run = 0; const cum = st.byDay.map((v) => (run += v));
-  const upto = st.elapsed || n, mxC = Math.max(run, F.budget || 0, 1);
+  const now = ymNow(), upto = F.ym === now ? new Date().getDate() : n, mxC = Math.max(run, 1);
   const X = (i) => L + step * i + step / 2, Yb = (v) => T + ph - (v / mxB) * ph, Yc = (v) => T + ph - (v / mxC) * ph;
   let s = '<defs><linearGradient id="fbar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f59e0b"/><stop offset="1" stop-color="#f59e0b" stop-opacity=".2"/></linearGradient></defs>';
   for (let g = 0; g <= 4; g++) { const y = T + (g / 4) * ph; s += `<line x1="${L}" x2="${Wd - R}" y1="${y}" y2="${y}" class="h-grid-l"/><text x="${L - 8}" y="${y + 4}" text-anchor="end" class="h-ax" style="fill:#f59e0b">${short(mxB * (1 - g / 4))}</text><text x="${Wd - R + 8}" y="${y + 4}" class="h-ax" style="fill:#22d3ee">${short(mxC * (1 - g / 4))}</text>`; }
   st.byDay.forEach((v, i) => { if (v > 0) s += `<rect x="${(X(i) - bw / 2).toFixed(1)}" y="${Yb(v).toFixed(1)}" width="${bw.toFixed(1)}" height="${(T + ph - Yb(v)).toFixed(1)}" rx="3" fill="url(#fbar)" style="filter:drop-shadow(0 0 4px #f59e0b66)"/>`; });
-  if (F.budget != null) s += `<line x1="${X(0).toFixed(1)}" y1="${Yc(F.budget / n).toFixed(1)}" x2="${X(n - 1).toFixed(1)}" y2="${Yc(F.budget).toFixed(1)}" stroke="#d62bd0" stroke-width="2" stroke-dasharray="6 6" style="filter:drop-shadow(0 0 4px #d62bd0)"/>`;
   s += `<path d="M${cum.slice(0, upto).map((c, i) => `${X(i).toFixed(1)} ${Yc(c).toFixed(1)}`).join(' L')}" fill="none" stroke="#22d3ee" stroke-width="2.4" stroke-linejoin="round" style="filter:drop-shadow(0 0 5px #22d3ee)"/>`;
   for (let i = 0; i < n; i += n > 20 ? 2 : 1) s += `<text x="${X(i).toFixed(1)}" y="${Ht - 10}" text-anchor="middle" class="h-ax">${i + 1}</text>`;
   F.geo = { X, n, L, Wd, cum, byDay: st.byDay, Yc, step };
@@ -1389,7 +1395,7 @@ function bindFDaily() {
     const r = svg.getBoundingClientRect(), x = (e.clientX - r.left) * (g.Wd / r.width), i = Math.max(0, Math.min(g.n - 1, Math.floor((x - g.L) / g.step))), gx = g.X(i);
     vl.setAttribute('x1', gx); vl.setAttribute('x2', gx); vl.style.display = ''; dot.setAttribute('cx', gx); dot.setAttribute('cy', g.Yc(g.cum[i])); dot.style.display = '';
     const dl = `${HD[(dn(`${F.ym}-${pad2(i + 1)}`) + 3) % 7]} ${i + 1}`;
-    tp.innerHTML = `<strong>${dl}</strong><div><i style="background:#f59e0b"></i>Spent <b>${money(g.byDay[i])}</b></div><div><i style="background:#22d3ee"></i>Running total <b>${money(g.cum[i])}</b></div>` + (F.budget != null ? `<div><i style="background:#d62bd0"></i>Budget pace <b>${money(F.budget * (i + 1) / g.n)}</b></div>` : '');
+    tp.innerHTML = `<strong>${dl}</strong><div><i style="background:#f59e0b"></i>Spent <b>${money(g.byDay[i])}</b></div><div><i style="background:#22d3ee"></i>Running total <b>${money(g.cum[i])}</b></div>`;
     tp.style.display = 'block'; const px = (gx / g.Wd) * r.width; tp.style.left = (px > r.width - 240 ? px - tp.offsetWidth - 14 : px + 14) + 'px';
   };
   box.onmouseleave = () => { tp.style.display = 'none'; vl.style.display = 'none'; dot.style.display = 'none'; };
@@ -1405,59 +1411,60 @@ function fDonut(st) {
   const legend = [...cats, ...F.cats.filter((c) => !cats.includes(c))].map((c) => `<div class="f-leg${F.filter === c ? ' on' : ''}" data-f="cat" data-c="${ea(c)}" style="--c:${fcol(c)}"><i></i><span>${esc(c)}</span><b>${money(st.byCat[c] || 0)}</b><em>${Math.round((st.byCat[c] || 0) / st.total * 100)}%</em><u style="width:${((st.byCat[c] || 0) / st.total * 100).toFixed(1)}%"></u></div>`).join('');
   return `<div class="f-donut"><svg viewBox="0 0 200 200"><circle cx="100" cy="100" r="70" fill="none" stroke="#1b1b27" stroke-width="24"/>${seg}<text x="100" y="100" text-anchor="middle" class="f-dc">${short(st.total)}</text><text x="100" y="118" text-anchor="middle" class="h-ax">spent</text></svg><div class="f-legend">${legend}</div></div>`;
 }
-function fPlaces(st) {
-  const e = Object.entries(st.byPlace).sort((a, b) => b[1] - a[1]).slice(0, 6);
-  if (!e.length) return '<div class="h-empty">Nothing yet.</div>';
-  return `<div class="f-places">${e.map(([n, v]) => `<div class="f-pl"><span>${esc(n)}</span><b>${money(v)}</b><u style="width:${(v / e[0][1] * 100).toFixed(1)}%"></u></div>`).join('')}</div>`;
-}
 function fHeat(st) {
   const off = (dn(`${F.ym}-01`) + 3) % 7, mx = Math.max(...st.byDay, 1), now = ymNow() === F.ym ? new Date().getDate() : 0;
   let cells = HD.map((d) => `<div class="f-hd">${d[0]}</div>`).join('') + '<i></i>'.repeat(off);
   st.byDay.forEach((v, i) => { cells += `<div class="f-day${i + 1 === now ? ' now' : ''}" title="${i + 1} · ${money(v)}" style="${v ? `background:color-mix(in srgb,var(--pa) ${Math.round(12 + (v / mx) * 78)}%,#1b1b27)` : ''}"><span>${i + 1}</span>${v ? `<small>${short(v)}</small>` : ''}</div>`; });
   return `<div class="f-heat">${cells}</div>`;
 }
-function fYear() {
-  const y = F.ym.slice(0, 4), st = fStats(), data = Array.from({ length: 12 }, (_, i) => { const ym = `${y}-${pad2(i + 1)}`; return ym === F.ym ? { total: st.total, byCat: st.byCat } : F.months[ym] || null; });
-  const mx = Math.max(...data.map((d) => (d ? d.total : 0)), 1), Wd = 900, Ht = 240, L = 54, T = 12, Bm = 26, ph = Ht - T - Bm, step = (Wd - L - 10) / 12, bw = Math.min(46, step * 0.62);
-  let s = '';
-  for (let g = 0; g <= 3; g++) { const yy = T + (g / 3) * ph; s += `<line x1="${L}" x2="${Wd - 6}" y1="${yy}" y2="${yy}" class="h-grid-l"/><text x="${L - 8}" y="${yy + 4}" text-anchor="end" class="h-ax">${short(mx * (1 - g / 3))}</text>`; }
-  data.forEach((d, i) => {
-    const cx = L + step * i + step / 2, ym = `${y}-${pad2(i + 1)}`; let yy = T + ph;
-    if (d && d.total > 0) {
-      const known = F.cats.reduce((a, c) => a + (d.byCat[c] || 0), 0), parts = F.cats.map((c) => [c, d.byCat[c] || 0]).concat([['Uncategorised', d.total - known]]);
-      parts.forEach(([c, v]) => { if (v <= 0.005) return; const h = (v / mx) * ph; yy -= h; s += `<rect x="${(cx - bw / 2).toFixed(1)}" y="${yy.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(h - 1, 0.5).toFixed(1)}" fill="${F.cats.includes(c) ? fcol(c) : '#6b7280'}" opacity="${ym === F.ym ? 1 : 0.72}"><title>${ymLabel(ym)} · ${esc(c)} ${money(v)}</title></rect>`; });
-    }
-    s += `<rect data-f="goto" data-ym="${ym}" x="${(cx - step / 2).toFixed(1)}" y="${T}" width="${step.toFixed(1)}" height="${ph + Bm}" fill="${ym === F.ym ? '#ffffff0a' : 'transparent'}" style="cursor:pointer"><title>${ymLabel(ym)}${d ? ' · ' + money(d.total) : ''}</title></rect><text x="${cx.toFixed(1)}" y="${Ht - 8}" text-anchor="middle" class="h-ax" style="${ym === F.ym ? 'fill:#fff' : ''}">${new Date(2000, i, 1).toLocaleDateString('en', { month: 'short' })}</text>`;
-  });
-  return `<svg viewBox="0 0 ${Wd} ${Ht}" class="h-svg">${s}</svg>`;
-}
 function renderFCharts(st) {
   $('f-charts').innerHTML = `
-    <div class="p-card f-wide"><div class="h-ch"><h3>Daily spending</h3><span class="h-hint">bars: per day · line: running total${F.budget != null ? ' · dashed: budget pace' : ''}</span></div>${fDaily(st)}</div>
+    <div class="p-card f-wide"><div class="h-ch"><h3>Daily spending</h3><span class="h-hint">bars: per day · line: running total</span></div>${fDaily(st)}</div>
     <div class="p-card"><div class="h-ch"><h3>Where it goes</h3><span class="h-hint">click to filter</span></div>${fDonut(st)}</div>
-    <div class="p-card"><div class="h-ch"><h3>By day of week</h3></div>${st.total ? bars(st.byDow, HD, '#22d3ee', short) : '<div class="h-empty">Nothing yet.</div>'}</div>
-    <div class="p-card"><div class="h-ch"><h3>Top places</h3></div>${fPlaces(st)}</div>
-    <div class="p-card"><div class="h-ch"><h3>Month at a glance</h3></div>${fHeat(st)}</div>
-    <div class="p-card f-wide" id="f-c-year"><div class="h-ch"><h3>Month by month · ${F.ym.slice(0, 4)}</h3><span class="h-hint">click a month to open it</span></div>${fYear()}</div>`;
+    <div class="p-card"><div class="h-ch"><h3>By day of week</h3></div>${st.total ? bars(st.byDow, HD, '#22d3ee', short) : '<div class="h-empty">Nothing yet.</div>'}</div>`;
   bindFDaily();
 }
+function renderFGlance(st) { $('f-glance').innerHTML = `<div class="h-ch"><h3>Month at a glance</h3></div>${fHeat(st)}`; }
 
 function renderFTx() {
-  const chips = [['', 'All'], ...F.cats.map((c) => [c, c])].map(([c, l]) => `<button class="f-cat${F.filter === c ? ' on' : ''}" data-f="filter" data-c="${ea(c)}" style="--c:${c ? fcol(c) : '#ffffff'}"><i></i>${esc(l)}</button>`).join('');
-  $('f-tx').innerHTML = `<div class="h-ch"><h3>Transactions</h3><span class="h-hint" id="f-shown"></span><div class="h-chips">${chips}</div><input class="f-in f-search" placeholder="Search" value="${ea(F.q)}"><button data-f="paste">Paste from Sheets</button></div>
-    <div class="f-txs"><table class="h-tbl f-tbl"><thead><tr><th>Date</th><th>Details</th><th>Amount</th><th>Category</th><th>Comment</th><th></th></tr></thead><tbody id="f-rows"></tbody></table></div>`;
+  const chips = [['', 'All'], ...F.cats.map((c) => [c, c])].map(([c, l]) => `<button class="f-cat${F.filter === c ? ' on' : ''}" data-f="filter" data-c="${ea(c)}" style="--c:${c ? fcol(c) : '#ffffff'}"${c ? ' title="Right-click to rename"' : ''}><i></i>${esc(l)}</button>`).join('');
+  $('f-tx').innerHTML = `<div class="h-ch"><h3>Transactions</h3><span class="h-hint" id="f-shown"></span><div class="h-chips">${chips}</div><button data-f="paste">Paste from Sheets</button></div>
+    <div class="f-txs"><table class="h-tbl f-tbl"><thead><tr><th>Date</th><th>Details</th><th>Amount</th><th>Category</th><th>Comment</th><th></th></tr></thead><tbody id="f-rows"></tbody></table></div>
+    <div class="f-foot"><button data-f="newcat">+ Add category</button><span class="h-hint">Right-click a category to rename it.</span></div>`;
   renderFRows();
 }
 function renderFRows() {
-  const q = F.q.toLowerCase(), max = pad2(dimOf(F.ym));
-  const rows = F.tx.map((t, i) => [t, i]).filter(([t]) => (!F.filter || t.cat === F.filter) && (!q || `${t.det} ${t.note}`.toLowerCase().includes(q))).sort((a, b) => a[0].date.localeCompare(b[0].date) || a[1] - b[1]);
+  const max = pad2(dimOf(F.ym)), rows = F.tx.map((t, i) => [t, i]).filter(([t]) => !F.filter || t.cat === F.filter).sort((a, b) => a[0].date.localeCompare(b[0].date) || a[1] - b[1]);
   $('f-rows').innerHTML = rows.map(([t]) => `<tr data-id="${t.id}"><td><input type="date" class="f-in" data-k="date" value="${t.date}" min="${F.ym}-01" max="${F.ym}-${max}"></td><td><input class="f-in" data-k="det" value="${ea(t.det)}"></td><td><input class="f-in f-num" data-k="amt" value="${t.amt}"></td><td><select class="f-in f-sel" data-k="cat" style="--c:${fcol(t.cat)}">${F.cats.map((c) => `<option${c === t.cat ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select></td><td><input class="f-in" data-k="note" value="${ea(t.note)}"></td><td><button class="f-x" data-f="del" title="Delete">×</button></td></tr>`).join('') || '<tr><td colspan="6" class="h-empty">No transactions to show.</td></tr>';
   $('f-shown').textContent = `${rows.length} shown · ${money(rows.reduce((a, [t]) => a + t.amt, 0))}`;
 }
 
+function fRename(old) {
+  const used = F.tx.filter((t) => t.cat === old).length, ov = document.createElement('div'); ov.className = 't-modal';
+  ov.innerHTML = `<div class="t-card g-card"><h3>Rename category</h3><div class="g-f"><label>New name</label><input class="g-in" id="fr-n" value="${ea(old)}" maxlength="30"></div>
+    <label class="f-chk"><input type="checkbox" id="fr-c" checked><span>Also change the ${used} transaction${used === 1 ? '' : 's'} in ${ymLabel(F.ym)} that use “${esc(old)}”</span></label>
+    <div class="t-actions"><span></span><button data-a="x">Cancel</button><button class="primary" data-a="ok">Rename</button></div></div>`;
+  const close = () => ov.remove();
+  const ok = () => {
+    const nv = cleanCat(ov.querySelector('#fr-n').value), upd = ov.querySelector('#fr-c').checked; close();
+    if (!nv || nv === old) return;
+    const i = F.cats.indexOf(old), j = F.cats.findIndex((c, k) => k !== i && c.toLowerCase() === nv.toLowerCase());
+    let target = nv;
+    if (j >= 0) { target = F.cats[j]; F.cats.splice(i, 1); } else F.cats[i] = nv;
+    if (upd) F.tx.forEach((t) => { if (t.cat === old) t.cat = target; });
+    else if (F.tx.some((t) => t.cat === old)) F.cats.push(old);
+    if (F.draft.cat === old) F.draft.cat = target;
+    if (F.filter === old) F.filter = target;
+    F.msg = `Renamed “${old}” to “${target}”${upd && used ? ` and updated ${used} transaction${used === 1 ? '' : 's'}` : ''}`;
+    renderFAdd(); fRefresh(); fSaveSoon();
+  };
+  ov.onclick = (e) => { if (e.target === ov) close(); const a = e.target.dataset && e.target.dataset.a; if (a === 'x') close(); if (a === 'ok') ok(); };
+  ov.onkeydown = (e) => { if (e.key === 'Escape') close(); if (e.key === 'Enter' && e.target.id === 'fr-n') ok(); };
+  document.body.appendChild(ov); const n = ov.querySelector('#fr-n'); n.focus(); n.select();
+}
 function fPaste() {
   const ov = document.createElement('div'); ov.className = 't-modal';
-  ov.innerHTML = `<div class="t-card g-card"><h3>Paste from Google Sheets</h3><div class="t-for">Copy rows (Date, Details, Amount, Category, Comment) and paste them here. Dates like "01, Thursday" are read as that day of this month.</div><textarea style="height:180px"></textarea><div class="t-actions"><span></span><button data-a="x">Cancel</button><button class="primary" data-a="ok">Import</button></div></div>`;
+  ov.innerHTML = `<div class="t-card g-card"><h3>Paste from Google Sheets</h3><div class="t-for">Copy rows (Date, Details, Amount, Category, Comment) and paste them here. Dates like “01, Thursday” are read as that day of this month.</div><textarea style="height:180px"></textarea><div class="t-actions"><span></span><button data-a="x">Cancel</button><button class="primary" data-a="ok">Import</button></div></div>`;
   const ta = ov.querySelector('textarea'), close = () => ov.remove();
   const ok = () => {
     let n = 0, skipped = 0;
@@ -1483,14 +1490,14 @@ fEl.addEventListener('click', (e) => {
   const el = e.target.closest('[data-f]'); if (!el) return; const a = el.dataset.f;
   if (a === 'prev' || a === 'next') fGo(ymAdd(F.ym, a === 'next' ? 1 : -1));
   else if (a === 'now') fGo(ymNow());
-  else if (a === 'goto') { if (el.dataset.ym !== F.ym) fGo(el.dataset.ym); }
   else if (a === 'add') fAdd();
   else if (a === 'pick') { F.draft.cat = el.dataset.c; fCats(); }
   else if (a === 'newcat') {
     const i = document.createElement('input'); i.className = 'f-in f-newcat'; i.placeholder = 'Category name'; el.replaceWith(i); i.focus(); let done = false;
     const fin = (ok) => {
       if (done) return; done = true; const v = cleanCat(i.value);
-      if (ok && v && !F.cats.some((c) => c.toLowerCase() === v.toLowerCase())) { F.cats.push(v); F.draft.cat = v; fSaveSoon(); fCats(); fRefresh(); } else fCats();
+      if (ok && v && !F.cats.some((c) => c.toLowerCase() === v.toLowerCase())) { F.cats.push(v); F.draft.cat = v; fSaveSoon(); renderFAdd(); }
+      fRefresh();
     };
     i.onkeydown = (ev) => { ev.stopPropagation(); if (ev.key === 'Enter') fin(true); if (ev.key === 'Escape') fin(false); }; i.onblur = () => fin(true);
   }
@@ -1498,20 +1505,22 @@ fEl.addEventListener('click', (e) => {
   else if (a === 'del') { const id = el.closest('tr').dataset.id; F.tx = F.tx.filter((t) => t.id !== id); fRefresh(); fSaveSoon(); }
   else if (a === 'paste') fPaste();
 });
+fEl.addEventListener('contextmenu', (e) => {
+  const el = e.target.closest('[data-c]'); if (!el || !el.dataset.c || !['pick', 'filter', 'cat'].includes(el.dataset.f)) return;
+  e.preventDefault(); ctxAt(e, [['Rename category…', () => fRename(el.dataset.c)]]);
+});
 fEl.addEventListener('change', (e) => {
   const i = e.target;
-  if (i.classList.contains('f-budget')) { F.budget = parseNum(i.value); fSaveSoon(); fRefresh(); return; }
   if (i.id === 'f-cur') { F.cur = i.value.trim() || '$'; fSaveSoon(); fRefresh(); return; }
   if (!i.dataset.k || !i.closest('#f-tx')) return;
   const t = F.tx.find((x) => x.id === i.closest('tr').dataset.id), k = i.dataset.k; if (!t) return;
   if (k === 'amt') { const v = parseNum(i.value); if (v == null) { i.value = t.amt; return; } t.amt = v; i.value = v; }
   else if (k === 'date') { if (!i.value || i.value.slice(0, 7) !== F.ym) { i.value = t.date; return; } t.date = i.value; }
   else t[k] = i.value.trim();
-  fSaveSoon(); const st = fStats(); renderFStats(st); renderFCharts(st); renderFRows();
+  fSaveSoon(); const st = fStats(); renderFStats(st); renderFCharts(st); renderFRows(); renderFGlance(st);
 });
-fEl.addEventListener('input', (e) => { if (e.target.classList.contains('f-search')) { F.q = e.target.value; renderFRows(); } });
 fEl.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' || e.target.tagName !== 'INPUT' || e.target.classList.contains('f-newcat')) return;
-  if (e.target.closest('#f-add')) fAdd(); else if (e.target.dataset.k || e.target.classList.contains('f-budget') || e.target.id === 'f-cur') e.target.blur();
+  if (e.target.closest('#f-add')) fAdd(); else if (e.target.dataset.k || e.target.id === 'f-cur') e.target.blur();
 });
 $('btn-finance').onclick = () => showFinance();
