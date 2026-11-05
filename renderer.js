@@ -348,10 +348,7 @@ window.addEventListener('beforeunload', () => { if (tSave) tSaveNow(); });
 
 async function showTasks() {
   if (S.view === 'tasks') { render(); return; }
-  if (!S.tasks) {
-    try { S.tasks = JSON.parse(await api.loadTasks()); } catch { S.tasks = null; }
-    if (!S.tasks || !Array.isArray(S.tasks.categories)) S.tasks = { categories: [] };
-  }
+  await loadTasksData();
   setView('tasks'); renderTasks();
 }
 
@@ -394,9 +391,11 @@ function renderTasks() {
   const sl = old ? old.scrollLeft : 0, st = old ? old.scrollTop : 0;
   const all = T.categories.flatMap((c) => c.tasks), done = all.filter((t) => t.done).length, pct = all.length ? Math.round(done / all.length * 100) : 0;
   const date = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
-  el.innerHTML = `<div class="t-head"><div><h1>Daily tasks</h1><div class="t-sub">${T.categories.length ? `${date} · ${done} of ${all.length} done` : 'Add a category to build your routine'}</div></div>
-    <div class="t-prog" title="${pct}%"><i style="width:${pct}%"></i></div><button id="t-reset">Uncheck all</button></div><div class="t-board"></div>`;
-  $('t-reset').onclick = () => { all.forEach((t) => { t.done = false; }); tChanged(); };
+  const mm = !!S.mullMode, mt = mm ? mullTotals() : null; el.classList.toggle('mulling', mm);
+  el.innerHTML = `<div class="t-head"><div><h1>${mm ? 'Mulling setup' : 'Daily tasks'}</h1><div class="t-sub">${mm ? `Tick what should come up today, untick what to leave out · ${mt.on} of ${mt.tot} in play · press Mulling again when you’re done` : (T.categories.length ? `${date} · ${done} of ${all.length} done` : 'Add a category to build your routine')}</div></div>
+    ${mm ? '' : `<div class="t-prog" title="${pct}%"><i style="width:${pct}%"></i></div>`}<button id="t-mull" class="t-mullbtn${mm ? ' on' : ''}" title="Choose which tasks the Pomodoro mulling box can pick from">Mulling</button>${mm ? '' : '<button id="t-reset">Uncheck all</button>'}</div><div class="t-board"></div>`;
+  $('t-mull').onclick = () => { S.mullMode = !S.mullMode; renderTasks(); };
+  const rb = $('t-reset'); if (rb) rb.onclick = () => { all.forEach((t) => setTaskDone(t, false)); tChanged(); };
   const board = el.querySelector('.t-board');
   const lines = [0, 1].map(() => { const l = document.createElement('div'); l.className = 't-line'; return l; });
   T.categories.forEach((c, ci) => lines[c.row ? 1 : 0].appendChild(colEl(c, ci)));
@@ -406,31 +405,37 @@ function renderTasks() {
 }
 
 function colEl(c, ci) {
-  const T = S.tasks, d = document.createElement('section'); d.className = 't-col'; d.style.setProperty('--c', PAL[c.color % PAL.length]);
+  const T = S.tasks, d = document.createElement('section'); d.className = 't-col' + (S.mullMode && c.noMull ? ' catoff' : ''); d.style.setProperty('--c', PAL[c.color % PAL.length]);
   const n = c.tasks.filter((t) => t.done).length, p = c.tasks.length ? n / c.tasks.length * 100 : 0;
-  d.innerHTML = `<header class="t-ch"><span class="t-name">${esc(c.name)}</span><span class="t-count">${n}/${c.tasks.length}</span><button class="t-more" title="Category options">⋯</button></header><div class="t-bar"><i style="width:${p}%"></i></div><div class="t-list"></div>`;
+  const mm = !!S.mullMode, mc = mm ? catCounts(c) : null;
+  d.innerHTML = `<header class="t-ch">${mm ? `<button class="t-cbox${c.noMull ? '' : ' on'}" title="Include this whole category in mulling"></button>` : ''}<span class="t-name">${esc(c.name)}</span>${mm ? `<span class="t-count" title="tasks in play">${mc.on}/${mc.tot}</span>` : `<span class="t-count">${n}/${c.tasks.length}</span>`}<button class="t-more" title="Category options">⋯</button></header><div class="t-bar"><i style="width:${p}%"></i></div><div class="t-list"></div>`;
   const catMenu = (e) => ctxAt(e, [
     ['Rename', () => inlineEdit(d.querySelector('.t-name'), c.name, (v) => { c.name = v; tChanged(); })],
     ['Change color', () => { c.color = (c.color + 1) % PAL.length; tChanged(); }],
-    ['Uncheck all', () => { c.tasks.forEach((t) => { t.done = false; }); tChanged(); }],
+    ['Uncheck all', () => { c.tasks.forEach((t) => setTaskDone(t, false)); tChanged(); }],
     ...rowMoves(c, ci),
     null,
     ['Delete category', () => { if (c.tasks.length && !confirm(`Delete "${c.name}" and its ${c.tasks.length} tasks?`)) return; T.categories.splice(ci, 1); tChanged(); }, 'danger'],
   ].filter((x) => x !== false));
   d.querySelector('.t-ch').oncontextmenu = (e) => { e.preventDefault(); catMenu(e); };
   d.querySelector('.t-more').onclick = (e) => { e.stopPropagation(); catMenu(e); };
+  const cb = d.querySelector('.t-cbox'); if (cb) cb.onclick = () => { c.noMull = !c.noMull; tChanged(); };
 
   const list = d.querySelector('.t-list');
   c.tasks.forEach((t, ti) => {
-    const r = document.createElement('div'); r.className = 't-row' + (t.done ? ' done' : '') + (t.note ? ' has-note' : '');
-    r.innerHTML = `<span class="t-box"></span><span class="t-text">${esc(t.text)}</span>`;
+    t.subs = t.subs || [];
+    const hasSubs = t.subs.length > 0, nsub = t.subs.filter((x) => x.done).length;
+    const r = document.createElement('div'); r.className = 't-row' + (mm ? ` mm-${taskMullState(t)}${t.done ? ' strike' : ''}` : (t.done ? ' done' : '')) + (t.note ? ' has-note' : '');
+    r.innerHTML = `<span class="t-box"></span><span class="t-text">${esc(t.text)}</span>${hasSubs ? `<span class="t-cnt">${nsub}/${t.subs.length}</span><span class="t-chev" title="Show or hide subtasks">${t.collapsed ? '▸' : '▾'}</span>` : ''}`;
     const rename = () => inlineEdit(r.querySelector('.t-text'), t.text, (v) => { t.text = v; tChanged(); });
-    r.querySelector('.t-box').onclick = () => { t.done = !t.done; tChanged(); };
+    r.querySelector('.t-box').onclick = () => { if (mm) toggleMullTask(t); else setTaskDone(t, !t.done); tChanged(); };
     r.querySelector('.t-text').ondblclick = rename;
+    if (hasSubs) r.querySelectorAll('.t-cnt, .t-chev').forEach((x) => { x.onclick = () => { t.collapsed = !t.collapsed; tChanged(); }; });
     if (t.note) { r.onmouseenter = () => showTip(r, t.note); r.onmouseleave = () => { tip.hidden = true; }; }
     r.oncontextmenu = (e) => {
       e.preventDefault(); tip.hidden = true;
       ctxAt(e, [
+        ['Add subtasks…', () => subModal(t)],
         [t.note ? 'Edit note' : 'Add note', () => noteModal(t)],
         ['Rename', rename],
         ti > 0 && ['Move up', () => { mv(c.tasks, ti, -1); tChanged(); }],
@@ -440,9 +445,10 @@ function colEl(c, ci) {
       ].filter((x) => x !== false));
     };
     list.appendChild(r);
+    if (hasSubs && !t.collapsed) t.subs.forEach((x, si) => list.appendChild(subRow(t, x, si)));
   });
   const add = document.createElement('input'); add.className = 't-add'; add.placeholder = '+ Add task'; add.dataset.cat = c.id;
-  add.onkeydown = (e) => { if (e.key === 'Enter' && add.value.trim()) { c.tasks.push({ id: uid(), text: add.value.trim(), done: false, note: '' }); S.focusAdd = c.id; tChanged(); } };
+  add.onkeydown = (e) => { if (e.key === 'Enter' && add.value.trim()) { c.tasks.push({ id: uid(), text: add.value.trim(), done: false, note: '', subs: [] }); S.focusAdd = c.id; tChanged(); } };
   d.appendChild(add);
   return d;
 }
@@ -762,6 +768,7 @@ async function showPomo() {
     P.loaded = true;
     if (!P.running && P.left === P.total) { P.total = P.left = P.cfg[P.mode] * 60; }
   }
+  await loadTasksData();
   setView('pomo'); renderPomo();
 }
 
@@ -869,7 +876,7 @@ function renderPomo() {
         <div class="seg p-modes">${Object.entries(MODES).map(([m, l]) => `<button data-m="${m}" class="${P.mode === m ? 'on' : ''}">${l}</button>`).join('')}</div>
         ${visual()}
         <div class="p-ctrl"><button class="p-btn" id="p-reset" title="Reset">${ICON.reset}</button><button class="p-go" id="p-go" title="Start / pause (Space)">${P.running ? ICON.pause : ICON.play}</button><button class="p-btn" id="p-skip" title="Skip to next">${ICON.skip}</button></div>
-        <input class="p-task" placeholder="What are you focusing on?" value="${esc(P.task).replace(/"/g, '&quot;')}" spellcheck="false">
+        ${mullHtml()}
       </div>
       <aside class="p-side">
         <div class="p-card"><h3>Timer</h3>${step('focus', 'Focus', ' min')}${step('short', 'Short break', ' min')}${step('long', 'Long break', ' min')}${step('rounds', 'Rounds before long break', '')}</div>
@@ -895,7 +902,7 @@ function updPomo() {
   } else if (st === 'term' && $('p-tbar')) {
     const n = Math.round(frac * 30), state = P.running ? 'RUNNING' : P.left === P.total ? 'READY' : 'PAUSED';
     $('p-tbar').textContent = `[${'█'.repeat(n)}${'░'.repeat(30 - n)}] ${Math.round(frac * 100)}%`;
-    $('p-tlines').innerHTML = `<div>&gt; mode     ${MODES[P.mode].toUpperCase()}</div><div>&gt; task     ${esc(P.task) || '–'}</div><div>&gt; elapsed  ${mmss(P.total - P.left)}</div><div>&gt; status   ${state}<span class="p-cur">█</span></div>`;
+    $('p-tlines').innerHTML = `<div>&gt; mode     ${MODES[P.mode].toUpperCase()}</div><div>&gt; task     ${esc(mullText()) || '–'}</div><div>&gt; elapsed  ${mmss(P.total - P.left)}</div><div>&gt; status   ${state}<span class="p-cur">█</span></div>`;
   } else if (st === 'flip' && $('p-fl')) {
     const cs = [...$('p-fl').querySelectorAll('.pf')], chars = t.replace(':', '').split('');
     if (cs.length !== chars.length) $('p-fl').innerHTML = flipHtml(t);
@@ -911,6 +918,7 @@ function updPomo() {
 
 $('pomo').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.mull) { mullAct(b.dataset.mull); return; }
   if (b.dataset.sty) { P.cfg.style = b.dataset.sty; pSaveSoon(); renderPomo(); }
   else if (b.dataset.m) setMode(b.dataset.m, false);
   else if (b.dataset.k) {
@@ -925,7 +933,6 @@ $('pomo').addEventListener('click', (e) => {
   else if (b.id === 'p-skip') advance(false);
 });
 $('pomo').addEventListener('change', (e) => { if (e.target.classList.contains('p-sel')) { P.cfg.style = e.target.value; pSaveSoon(); renderPomo(); } });
-$('pomo').addEventListener('input', (e) => { if (e.target.classList.contains('p-task')) P.task = e.target.value; });
 document.addEventListener('keydown', (e) => {
   if (S.view !== 'pomo' || e.code !== 'Space' || /INPUT|TEXTAREA|BUTTON|SELECT/.test(e.target.tagName)) return;
   e.preventDefault(); if (P.running) pause(); else start();
@@ -1524,3 +1531,104 @@ fEl.addEventListener('keydown', (e) => {
   if (e.target.closest('#f-add')) fAdd(); else if (e.target.dataset.k || e.target.id === 'f-cur') e.target.blur();
 });
 $('btn-finance').onclick = () => showFinance();
+
+/* ---------- subtasks + mulling ---------- */
+/* mull:start */
+function setTaskDone(t, v) { t.done = v; if (t.subs && t.subs.length) t.subs.forEach((x) => { x.done = v; }); }
+function expandRepeat(line) {
+  const m = line.trim().match(/^(.*?)\s*[x×]\s*(\d{1,2})$/i);
+  if (m && m[1] && +m[2] >= 2) return Array.from({ length: +m[2] }, (_, i) => `${m[1]} (${i + 1}/${m[2]})`);
+  return line.trim() ? [line.trim()] : [];
+}
+const leavesOf = (t) => (t.subs && t.subs.length ? t.subs : [t]);
+function taskMullState(t) { const L = leavesOf(t), n = L.filter((x) => !x.noMull).length; return n === L.length ? 'on' : n === 0 ? 'off' : 'part'; }
+function toggleMullTask(t) { const on = taskMullState(t) === 'on'; t.noMull = on; (t.subs || []).forEach((x) => { x.noMull = on; }); }
+function toggleMullSub(t, s) { s.noMull = !s.noMull; t.noMull = t.subs.every((x) => x.noMull); }
+function catCounts(c) { let on = 0, tot = 0; c.tasks.forEach((t) => leavesOf(t).forEach((x) => { if (x.done) return; tot++; if (!c.noMull && !x.noMull) on++; })); return { on, tot }; }
+function mullTotals() { let on = 0, tot = 0; S.tasks.categories.forEach((c) => { const k = catCounts(c); on += k.on; tot += k.tot; }); return { on, tot }; }
+function mullNext(c) {
+  if (c.noMull) return null;
+  for (const t of c.tasks) {
+    if (t.subs && t.subs.length) { const s = t.subs.find((x) => !x.done && !x.noMull); if (s) return { cid: c.id, tid: t.id, sid: s.id }; }
+    else if (!t.done && !t.noMull) return { cid: c.id, tid: t.id, sid: null };
+  }
+  return null;
+}
+function mullFind(it) {
+  const c = S.tasks.categories.find((x) => x.id === it.cid), t = c && c.tasks.find((x) => x.id === it.tid), s = t && it.sid ? (t.subs || []).find((x) => x.id === it.sid) : null;
+  return { c, t, s, ok: !!(c && t && (!it.sid || s)) };
+}
+const mullDone = (it) => { const f = mullFind(it); return f.ok ? (it.sid ? f.s.done : f.t.done) : false; };
+const mullIn = (f) => !f.c.noMull && !(f.s ? f.s.noMull : f.t.noMull);
+function mullAssign() {
+  const T = S.tasks, M = T.mull || (T.mull = { cur: null, served: [], last: null }), cands = T.categories.filter((c) => mullNext(c));
+  if (!cands.length) { M.cur = null; return false; }
+  let fresh = cands.filter((c) => !M.served.includes(c.id));
+  if (!fresh.length) { M.served = []; fresh = cands.filter((c) => c.id !== M.last); if (!fresh.length) fresh = cands; }
+  const c = fresh[Math.floor(Math.random() * fresh.length)];
+  M.served.push(c.id); M.last = c.id; M.cur = mullNext(c); return true;
+}
+/* mull:end */
+
+async function loadTasksData() {
+  if (S.tasks) return;
+  try { S.tasks = JSON.parse(await api.loadTasks()); } catch { S.tasks = null; }
+  if (!S.tasks || !Array.isArray(S.tasks.categories)) S.tasks = { categories: [] };
+  S.tasks.categories.forEach((c) => c.tasks.forEach((t) => { t.subs = t.subs || []; if (t.subs.length && t.noMull) t.subs.forEach((x) => { x.noMull = true; }); }));
+}
+function mullText() {
+  const T = S.tasks, M = T && T.mull; if (!M || !M.cur) return '';
+  const f = mullFind(M.cur); return f.ok && !mullDone(M.cur) && mullIn(f) ? (f.s ? f.s.text : f.t.text) : '';
+}
+function mullHtml() {
+  const T = S.tasks; if (!T) return '<div class="p-mull idle" id="p-mull"><span>Loading tasks…</span></div>';
+  const M = T.mull, f0 = M && M.cur ? mullFind(M.cur) : null, f = f0 && f0.ok && (mullDone(M.cur) || mullIn(f0)) ? f0 : null, left = T.categories.some((c) => mullNext(c));
+  if (f && f.ok) {
+    const done = mullDone(M.cur), col = PAL[f.c.color % PAL.length], title = f.s ? f.s.text : f.t.text, crumb = f.s ? `${f.c.name} › ${f.t.text}` : f.c.name;
+    return `<div class="p-mull${done ? ' done' : ''}" id="p-mull" style="--c:${col}"><button class="p-mbox" data-mull="tick" title="${done ? 'Mark as not done' : 'Mark as done'}"></button><div class="p-mt"><b>${esc(title)}</b><small>${esc(crumb)}</small></div>${done ? (left ? '<button class="p-mnext" data-mull="next">Assign next task</button>' : '<small class="p-mall">That was the last one</small>') : ''}</div>`;
+  }
+  return `<div class="p-mull idle" id="p-mull">${left ? '<span>Ready when you are</span><button class="p-mnext" data-mull="next">Assign a task</button>' : '<span>Nothing left to mull. Everything’s ticked off.</span>'}</div>`;
+}
+function renderMull() { const el = $('p-mull'); if (el) el.outerHTML = mullHtml(); updPomo(); }
+function mullAct(a) {
+  const T = S.tasks; if (!T) return;
+  if (a === 'next') mullAssign();
+  else if (a === 'tick' && T.mull && T.mull.cur) {
+    const f = mullFind(T.mull.cur); if (!f.ok) return; const v = !mullDone(T.mull.cur);
+    if (f.s) { f.s.done = v; f.t.done = f.t.subs.every((x) => x.done); } else setTaskDone(f.t, v);
+  }
+  tChanged(); renderMull();
+}
+
+function subRow(t, s, si) {
+  const r = document.createElement('div'); const mm = !!S.mullMode; r.className = 't-row t-sub' + (mm ? ` mm-${s.noMull ? 'off' : 'on'}${s.done ? ' strike' : ''}` : (s.done ? ' done' : ''));
+  r.innerHTML = `<span class="t-box"></span><span class="t-text">${esc(s.text)}</span>`;
+  const rename = () => inlineEdit(r.querySelector('.t-text'), s.text, (v) => { s.text = v; tChanged(); });
+  r.querySelector('.t-box').onclick = () => { if (mm) toggleMullSub(t, s); else { s.done = !s.done; t.done = t.subs.every((x) => x.done); } tChanged(); };
+  r.querySelector('.t-text').ondblclick = rename;
+  r.oncontextmenu = (e) => {
+    e.preventDefault();
+    ctxAt(e, [
+      ['Add subtasks…', () => subModal(t)],
+      ['Rename', rename],
+      si > 0 && ['Move up', () => { mv(t.subs, si, -1); tChanged(); }],
+      si < t.subs.length - 1 && ['Move down', () => { mv(t.subs, si, 1); tChanged(); }],
+      null,
+      ['Delete subtask', () => { t.subs.splice(si, 1); if (t.subs.length) t.done = t.subs.every((x) => x.done); tChanged(); }, 'danger'],
+    ].filter((x) => x !== false));
+  };
+  return r;
+}
+function subModal(t) {
+  const ov = document.createElement('div'); ov.className = 't-modal';
+  ov.innerHTML = `<div class="t-card g-card"><h3>Add subtasks</h3><div class="t-for">${esc(t.text)}</div><textarea style="height:140px" placeholder="One per line. End a line with x4 to repeat it, for example: Edit 5 minutes x4"></textarea><div class="t-actions"><span></span><button data-a="x">Cancel</button><button class="primary" data-a="ok">Add</button></div></div>`;
+  const ta = ov.querySelector('textarea'), close = () => ov.remove();
+  const ok = () => {
+    const names = ta.value.split(/\r?\n/).flatMap(expandRepeat); close(); if (!names.length) return;
+    t.subs = t.subs || []; names.forEach((n) => t.subs.push({ id: uid(), text: n, done: false, noMull: !!t.noMull }));
+    t.done = t.subs.every((x) => x.done); t.collapsed = false; tChanged();
+  };
+  ov.onclick = (e) => { if (e.target === ov) close(); const a = e.target.dataset && e.target.dataset.a; if (a === 'x') close(); if (a === 'ok') ok(); };
+  ov.onkeydown = (e) => { if (e.key === 'Escape') close(); if (e.key === 'Enter' && e.ctrlKey) ok(); };
+  document.body.appendChild(ov); ta.focus();
+}

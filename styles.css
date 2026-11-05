@@ -453,3 +453,46 @@ body.g-drag{cursor:grabbing;user-select:none}
 .f-chk{display:flex;align-items:flex-start;gap:10px;margin:6px 0 4px;color:var(--text)}
 .f-chk input{margin-top:3px;accent-color:var(--mag)}
 .f-heat{max-width:760px}
+
+/* ---------- subtasks + mulling ---------- */
+.t-cnt{font-size:11px;color:var(--dim);cursor:pointer}
+.t-chev{width:12px;font-size:10px;text-align:center;color:var(--dim);cursor:pointer}
+.t-ex{font-size:12px;color:var(--dim);opacity:.75}
+.t-sub{margin-left:20px;padding-top:3px;padding-bottom:3px}
+.t-sub .t-box{width:16px;height:16px;margin-top:2px;border-radius:5px}
+.t-sub.done .t-box::after{left:3.5px;top:.5px;width:4px;height:8px}
+.t-sub .t-text{font-size:12.5px}
+.p-mull{display:flex;align-items:center;gap:12px;width:100%;max-width:420px;min-height:52px;padding:8px 12px;background:#0d0d14aa;border:1px solid var(--line);border-radius:26px;box-shadow:0 0 18px color-mix(in srgb,var(--c,var(--pa)) 14%,transparent)}
+.p-mull:not(.idle){border-color:color-mix(in srgb,var(--c) 55%,var(--line))}
+.p-mull.idle{justify-content:center;color:var(--dim);text-align:center;flex-wrap:wrap}
+.p-mbox{flex:none;position:relative;width:26px;height:26px;padding:0;border:2px solid var(--c);border-radius:50%;background:transparent}
+.p-mbox:hover{box-shadow:0 0 10px color-mix(in srgb,var(--c) 55%,transparent)}
+.p-mull.done .p-mbox{background:var(--c)}
+.p-mull.done .p-mbox::after{content:"";position:absolute;left:7px;top:2px;width:6px;height:11px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.p-mt{flex:1;min-width:0;text-align:left}
+.p-mt b{display:block;color:var(--hi);font-weight:600;overflow-wrap:anywhere}
+.p-mt small{display:block;color:var(--dim)}
+.p-mull.done .p-mt b{color:var(--dim);text-decoration:line-through}
+.p-mnext{flex:none;padding:5px 14px;border:0;border-radius:16px;color:#fff;background:linear-gradient(135deg,var(--pa),var(--pb));box-shadow:0 0 14px color-mix(in srgb,var(--pa) 40%,transparent)}
+.p-mnext:hover{color:#fff;filter:brightness(1.12)}
+.p-mall{flex:none;color:var(--dim)}
+
+/* ---------- mulling select mode ---------- */
+.t-ex{display:none}
+.t-mullbtn.on{border-color:#22d3ee;color:#fff;background:#0e3a42;box-shadow:0 0 14px #22d3ee55}
+.tasks.mulling{background:radial-gradient(ellipse at 50% -20%,#0b2d33,var(--bg) 65%)}
+.tasks.mulling .t-col{--c:#22d3ee!important}
+.tasks.mulling .t-head h1{color:#a5f3fc}
+.tasks.mulling #t-mull{margin-left:auto}
+.tasks.mulling .t-bar{display:none}
+.t-cbox{flex:none;position:relative;width:20px;height:20px;padding:0;border:2px solid var(--c);border-radius:6px;background:transparent}
+.t-cbox.on{background:var(--c)}
+.t-cbox.on::after{content:"";position:absolute;left:5px;top:1px;width:5px;height:10px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.t-row.mm-on .t-box{background:var(--c)}
+.t-row.mm-on .t-box::after{content:"";position:absolute;left:5px;top:1px;width:5px;height:10px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.t-sub.mm-on .t-box::after{left:3.5px;top:.5px;width:4px;height:8px}
+.t-row.mm-part .t-box{background:color-mix(in srgb,var(--c) 35%,transparent)}
+.t-row.mm-part .t-box::after{content:"";position:absolute;left:3px;right:3px;top:7px;height:2px;border-radius:1px;background:#fff}
+.t-row.mm-off .t-text{color:var(--dim)}
+.t-row.strike .t-text{color:var(--dim);text-decoration:line-through}
+.t-col.catoff .t-list{opacity:.4}
