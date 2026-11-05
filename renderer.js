@@ -389,17 +389,21 @@ function renderTasks() {
   tip.hidden = true;
   const el = $('tasks'), T = S.tasks, old = el.querySelector('.t-board');
   const sl = old ? old.scrollLeft : 0, st = old ? old.scrollTop : 0;
-  const all = T.categories.flatMap((c) => c.tasks), done = all.filter((t) => t.done).length, pct = all.length ? Math.round(done / all.length * 100) : 0;
+  const mp = mullProgress(), done = mp.done, pct = mp.tot ? Math.round(done / mp.tot * 100) : 0, wo = !!(T.mull && T.mull.workOnly);
   const date = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
   const mm = !!S.mullMode, mt = mm ? mullTotals() : null; el.classList.toggle('mulling', mm);
-  el.innerHTML = `<div class="t-head"><div><h1>${mm ? 'Mulling setup' : 'Daily tasks'}</h1><div class="t-sub">${mm ? `Tick what should come up today, untick what to leave out · ${mt.on} of ${mt.tot} in play · press Mulling again when you’re done` : (T.categories.length ? `${date} · ${done} of ${all.length} done` : 'Add a category to build your routine')}</div></div>
-    ${mm ? '' : `<div class="t-prog" title="${pct}%"><i style="width:${pct}%"></i></div>`}<button id="t-mull" class="t-mullbtn${mm ? ' on' : ''}" title="Choose which tasks the Pomodoro mulling box can pick from">Mulling</button>${mm ? '' : '<button id="t-reset">Uncheck all</button>'}</div><div class="t-board"></div>`;
+  el.innerHTML = `<div class="t-head"><div><h1>${mm ? 'Mulling setup' : 'Daily tasks'}</h1><div class="t-sub">${mm ? `Tick what should come up today, untick what to leave out · ${mt.on} of ${mt.tot} in play · press Mulling again when you’re done` : (T.categories.length ? (mp.tot ? `${date} · ${done} of ${mp.tot} mulling tasks done${wo ? ' · work only' : ''}` : `${date} · no tasks selected for mulling`) : 'Add a category to build your routine')}</div></div>
+    ${mm ? '' : `<div class="t-prog" title="${pct}%"><i style="width:${pct}%"></i></div>`}<button id="t-mull" class="t-mullbtn${mm ? ' on' : ''}" title="Choose which tasks the Pomodoro mulling box can pick from">Mulling</button>${mm ? '' : '<button id="t-reset" title="Uncheck every task in row 1 (daily tasks)">Uncheck row 1</button>'}</div><div class="t-board"></div>`;
   $('t-mull').onclick = () => { S.mullMode = !S.mullMode; renderTasks(); };
-  const rb = $('t-reset'); if (rb) rb.onclick = () => { all.forEach((t) => setTaskDone(t, false)); tChanged(); };
+  const rb = $('t-reset'); if (rb) rb.onclick = () => { if (!confirm('Are you sure you want to uncheck all boxes?') || !confirm('Are you REALLY sure?')) return; T.categories.forEach((c) => { if (!c.row) c.tasks.forEach((t) => setTaskDone(t, false)); }); tChanged(); };
   const board = el.querySelector('.t-board');
-  const lines = [0, 1].map(() => { const l = document.createElement('div'); l.className = 't-line'; return l; });
-  T.categories.forEach((c, ci) => lines[c.row ? 1 : 0].appendChild(colEl(c, ci)));
-  lines[0].appendChild(ghostCol()); board.appendChild(lines[0]); if (lines[1].children.length) board.appendChild(lines[1]);
+  ['Daily tasks', 'Work tasks'].forEach((name, row) => {
+    const sec = document.createElement('div'); sec.className = 't-sec';
+    sec.innerHTML = `<div class="t-sech"><span>${name}</span><i></i></div>`;
+    const line = document.createElement('div'); line.className = 't-line';
+    T.categories.forEach((c, ci) => { if ((c.row ? 1 : 0) === row) line.appendChild(colEl(c, ci)); });
+    line.appendChild(ghostCol(row)); sec.appendChild(line); board.appendChild(sec);
+  });
   board.scrollLeft = sl; board.scrollTop = st;
   if (S.focusAdd) { const i = el.querySelector(`.t-add[data-cat="${S.focusAdd}"]`); if (i) i.focus(); S.focusAdd = null; }
 }
@@ -412,7 +416,9 @@ function colEl(c, ci) {
   const catMenu = (e) => ctxAt(e, [
     ['Rename', () => inlineEdit(d.querySelector('.t-name'), c.name, (v) => { c.name = v; tChanged(); })],
     ['Change color', () => { c.color = (c.color + 1) % PAL.length; tChanged(); }],
-    ['Uncheck all', () => { c.tasks.forEach((t) => setTaskDone(t, false)); tChanged(); }],
+    mm
+      ? ['Uncheck from mulling', () => { c.noMull = true; c.tasks.forEach((t) => { t.noMull = true; (t.subs || []).forEach((x) => { x.noMull = true; }); }); tChanged(); }]
+      : ['Uncheck all', () => { if (!confirm(`Are you sure you want to uncheck all boxes in “${c.name}”?`) || !confirm('Are you REALLY sure?')) return; c.tasks.forEach((t) => setTaskDone(t, false)); tChanged(); }],
     ...rowMoves(c, ci),
     null,
     ['Delete category', () => { if (c.tasks.length && !confirm(`Delete "${c.name}" and its ${c.tasks.length} tasks?`)) return; T.categories.splice(ci, 1); tChanged(); }, 'danger'],
@@ -453,14 +459,14 @@ function colEl(c, ci) {
   return d;
 }
 
-function ghostCol() {
+function ghostCol(row) {
   const g = document.createElement('button'); g.className = 't-ghost'; g.innerHTML = '<span>+</span> Add category';
   g.onclick = () => {
     const i = document.createElement('input'); i.className = 't-ghost-in'; i.placeholder = 'Category name'; g.replaceWith(i); i.focus();
     let done = false;
     const fin = (ok) => {
       if (done) return; done = true; const v = i.value.trim();
-      if (ok && v) { const c = { id: uid(), name: v, color: S.tasks.categories.length % PAL.length, tasks: [] }; S.tasks.categories.push(c); S.focusAdd = c.id; tChanged(); } else renderTasks();
+      if (ok && v) { const c = { id: uid(), name: v, color: S.tasks.categories.length % PAL.length, tasks: [], row: row || 0 }; S.tasks.categories.push(c); S.focusAdd = c.id; tChanged(); } else renderTasks();
     };
     i.onkeydown = (e) => { if (e.key === 'Enter') fin(true); if (e.key === 'Escape') fin(false); };
     i.onblur = () => fin(!!i.value.trim());
@@ -883,6 +889,7 @@ function renderPomo() {
         <div class="p-card"><h3>Automation &amp; alerts</h3>${sw('autoBreak', 'Auto-start breaks')}${sw('autoFocus', 'Auto-start focus')}${sw('sound', 'Chime when done')}${sw('notify', 'Desktop notification')}</div>
         <div class="p-card"><h3>Your focus</h3><div class="p-stats"><div class="p-stat"><b>${st.n}</b><small>sessions today</small></div><div class="p-stat"><b>${st.min}</b><small>minutes today</small></div></div><div class="p-week">${week}</div></div>
         <div class="p-card"><h3>Look</h3><select class="p-sel">${STY.map(([k, l]) => `<option value="${k}"${c.style === k ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+        ${workHtml()}
       </aside>
     </div>`;
   updPomo();
@@ -932,7 +939,7 @@ $('pomo').addEventListener('click', (e) => {
   else if (b.id === 'p-reset') resetT();
   else if (b.id === 'p-skip') advance(false);
 });
-$('pomo').addEventListener('change', (e) => { if (e.target.classList.contains('p-sel')) { P.cfg.style = e.target.value; pSaveSoon(); renderPomo(); } });
+$('pomo').addEventListener('change', (e) => { if (e.target.classList.contains('p-sel')) { P.cfg.style = e.target.value; pSaveSoon(); renderPomo(); } else if (e.target.hasAttribute('data-wo')) setWorkOnly(e.target.checked); });
 document.addEventListener('keydown', (e) => {
   if (S.view !== 'pomo' || e.code !== 'Space' || /INPUT|TEXTAREA|BUTTON|SELECT/.test(e.target.tagName)) return;
   e.preventDefault(); if (P.running) pause(); else start();
@@ -1251,7 +1258,7 @@ function rowMoves(c, ci) {
   const swap = (j) => { [T.categories[ci], T.categories[j]] = [T.categories[j], T.categories[ci]]; tChanged(); };
   if (p > 0) out.push(['Move left', () => swap(same[p - 1])]);
   if (p < same.length - 1) out.push(['Move right', () => swap(same[p + 1])]);
-  out.push([c.row ? 'Move to first row' : 'Move to second row', () => { c.row = c.row ? 0 : 1; tChanged(); }]);
+  out.push([c.row ? 'Move to daily tasks' : 'Move to work tasks', () => { c.row = c.row ? 0 : 1; tChanged(); }]);
   return out;
 }
 
@@ -1546,8 +1553,13 @@ function toggleMullTask(t) { const on = taskMullState(t) === 'on'; t.noMull = on
 function toggleMullSub(t, s) { s.noMull = !s.noMull; t.noMull = t.subs.every((x) => x.noMull); }
 function catCounts(c) { let on = 0, tot = 0; c.tasks.forEach((t) => leavesOf(t).forEach((x) => { if (x.done) return; tot++; if (!c.noMull && !x.noMull) on++; })); return { on, tot }; }
 function mullTotals() { let on = 0, tot = 0; S.tasks.categories.forEach((c) => { const k = catCounts(c); on += k.on; tot += k.tot; }); return { on, tot }; }
+function mullProgress() {
+  const wo = !!(S.tasks.mull && S.tasks.mull.workOnly); let done = 0, tot = 0;
+  S.tasks.categories.forEach((c) => { if (c.noMull || (wo && !c.row)) return; c.tasks.forEach((t) => leavesOf(t).forEach((x) => { if (x.noMull) return; tot++; if (x.done) done++; })); });
+  return { done, tot };
+}
 function mullNext(c) {
-  if (c.noMull) return null;
+  if (c.noMull || (S.tasks.mull && S.tasks.mull.workOnly && !c.row)) return null;
   for (const t of c.tasks) {
     if (t.subs && t.subs.length) { const s = t.subs.find((x) => !x.done && !x.noMull); if (s) return { cid: c.id, tid: t.id, sid: s.id }; }
     else if (!t.done && !t.noMull) return { cid: c.id, tid: t.id, sid: null };
@@ -1559,7 +1571,7 @@ function mullFind(it) {
   return { c, t, s, ok: !!(c && t && (!it.sid || s)) };
 }
 const mullDone = (it) => { const f = mullFind(it); return f.ok ? (it.sid ? f.s.done : f.t.done) : false; };
-const mullIn = (f) => !f.c.noMull && !(f.s ? f.s.noMull : f.t.noMull);
+const mullIn = (f) => !f.c.noMull && !(S.tasks.mull && S.tasks.mull.workOnly && !f.c.row) && !(f.s ? f.s.noMull : f.t.noMull);
 function mullAssign() {
   const T = S.tasks, M = T.mull || (T.mull = { cur: null, served: [], last: null }), cands = T.categories.filter((c) => mullNext(c));
   if (!cands.length) { M.cur = null; return false; }
@@ -1631,4 +1643,14 @@ function subModal(t) {
   ov.onclick = (e) => { if (e.target === ov) close(); const a = e.target.dataset && e.target.dataset.a; if (a === 'x') close(); if (a === 'ok') ok(); };
   ov.onkeydown = (e) => { if (e.key === 'Escape') close(); if (e.key === 'Enter' && e.ctrlKey) ok(); };
   document.body.appendChild(ov); ta.focus();
+}
+
+function workHtml() {
+  const T = S.tasks, on = !!(T && T.mull && T.mull.workOnly);
+  return `<div class="p-card"><h3>Mulling</h3><label class="p-chk"><input type="checkbox" data-wo${on ? ' checked' : ''}${T ? '' : ' disabled'}><span>Work tasks only<small>Skip row 1 (daily tasks) and only feed me row 2 (work tasks)</small></span></label></div>`;
+}
+function setWorkOnly(v) {
+  const T = S.tasks; if (!T) return;
+  const M = T.mull || (T.mull = { cur: null, served: [], last: null });
+  M.workOnly = v; M.served = []; tChanged(); renderMull();
 }
