@@ -575,5 +575,12 @@ body.g-drag{cursor:grabbing;user-select:none}
 
 /* ---------- v4.1: note ribbon in Pomodoro box, wider week log for steps ---------- */
 .p-mull{position:relative}
-.p-mull.has-note::after{content:"";position:absolute;top:-1px;right:36px;width:12px;height:16px;background:var(--c);clip-path:polygon(0 0,100% 0,100% 100%,50% 70%,0 100%)}
 .h-colL{width:520px}
+
+/* ---------- note ribbon in Pomodoro box: same corner ribbon as the Tasks page ---------- */
+.p-mull.has-note{overflow:hidden}
+.p-mull.has-note::after{content:"";position:absolute;top:0;right:0;width:0;height:0;border-style:solid;border-width:0 24px 24px 0;border-color:transparent var(--c) transparent transparent}
+
+/* ---------- mulling tally on the Pomodoro page ---------- */
+.p-tally{margin-top:-12px;text-align:center;font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums}
+.p-tally.all{color:var(--pa);text-shadow:0 0 10px color-mix(in srgb,var(--pa) 55%,transparent)}

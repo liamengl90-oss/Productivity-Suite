@@ -416,6 +416,7 @@ function colEl(c, ci) {
   const catMenu = (e) => ctxAt(e, [
     ['Rename', () => inlineEdit(d.querySelector('.t-name'), c.name, (v) => { c.name = v; tChanged(); })],
     ['Change color', () => { c.color = (c.color + 1) % PAL.length; tChanged(); }],
+    mm && ['Check all for mulling', () => { if (!confirm(`Are you sure you want to check all tasks in “${c.name}” for mulling?`) || !confirm('Are you REALLY sure?')) return; c.noMull = false; c.tasks.forEach((t) => { t.noMull = false; (t.subs || []).forEach((x) => { x.noMull = false; }); }); tChanged(); }],
     mm
       ? ['Uncheck from mulling', () => { c.noMull = true; c.tasks.forEach((t) => { t.noMull = true; (t.subs || []).forEach((x) => { x.noMull = true; }); }); tChanged(); }]
       : ['Uncheck all', () => { if (!confirm(`Are you sure you want to uncheck all boxes in “${c.name}”?`) || !confirm('Are you REALLY sure?')) return; c.tasks.forEach((t) => setTaskDone(t, false)); tChanged(); }],
@@ -760,7 +761,7 @@ $('btn-gantt').onclick = showGantt;
 
 /* ---------- pomodoro ---------- */
 const P = {
-  cfg: { focus: 25, short: 5, long: 15, rounds: 4, autoBreak: true, autoFocus: false, sound: true, notify: true, style: 'ring' },
+  cfg: { focus: 25, short: 5, long: 15, rounds: 4, autoBreak: true, autoFocus: false, sound: true, notify: true, style: 'ring', tally: false },
   mode: 'focus', total: 1500, left: 1500, running: false, endAt: 0, round: 1, task: '', stats: {},
   tick: null, loaded: false, lit: -1, save: null,
 };
@@ -887,6 +888,7 @@ function renderPomo() {
         ${visual()}
         <div class="p-ctrl"><button class="p-btn" id="p-reset" title="Reset">${ICON.reset}</button><button class="p-go" id="p-go" title="Start / pause (Space)">${P.running ? ICON.pause : ICON.play}</button><button class="p-btn" id="p-skip" title="Skip to next">${ICON.skip}</button></div>
         ${mullHtml()}
+        <div class="p-tally" id="p-tally" hidden></div>
       </div>
       <aside class="p-side">
         <div class="p-card"><h3>Timer</h3>${step('focus', 'Focus', ' min')}${step('short', 'Short break', ' min')}${step('long', 'Long break', ' min')}${step('rounds', 'Rounds before long break', '')}</div>
@@ -896,7 +898,7 @@ function renderPomo() {
         ${workHtml()}
       </aside>
     </div>`;
-  updPomo();
+  updPomo(); updTally();
 }
 
 function updPomo() {
@@ -943,7 +945,7 @@ $('pomo').addEventListener('click', (e) => {
   else if (b.id === 'p-reset') resetT();
   else if (b.id === 'p-skip') advance(false);
 });
-$('pomo').addEventListener('change', (e) => { if (e.target.classList.contains('p-sel')) { P.cfg.style = e.target.value; pSaveSoon(); renderPomo(); } else if (e.target.hasAttribute('data-wo')) setWorkOnly(e.target.checked); });
+$('pomo').addEventListener('change', (e) => { if (e.target.classList.contains('p-sel')) { P.cfg.style = e.target.value; pSaveSoon(); renderPomo(); } else if (e.target.hasAttribute('data-wo')) setWorkOnly(e.target.checked); else if (e.target.hasAttribute('data-tally')) { P.cfg.tally = e.target.checked; pSaveSoon(); updTally(); } });
 document.addEventListener('keydown', (e) => {
   if (S.view !== 'pomo' || e.code !== 'Space' || /INPUT|TEXTAREA|BUTTON|SELECT/.test(e.target.tagName)) return;
   e.preventDefault(); if (P.running) pause(); else start();
@@ -1629,7 +1631,7 @@ function mullHtml() {
   }
   return `<div class="p-mull idle" id="p-mull">${left ? '<span>Ready when you are</span><button class="p-mnext" data-mull="next">Assign a task</button>' : '<span>Nothing left to mull. Everything’s ticked off.</span>'}</div>`;
 }
-function renderMull() { const el = $('p-mull'); P.noteEl = null; tip.hidden = true; if (el) el.outerHTML = mullHtml(); updPomo(); }
+function renderMull() { const el = $('p-mull'); P.noteEl = null; tip.hidden = true; if (el) el.outerHTML = mullHtml(); updPomo(); updTally(); }
 function mullAct(a, sid) {
   const T = S.tasks; if (!T) return; const M = T.mull;
   if (a === 'next') mullAssign();
@@ -1681,7 +1683,7 @@ function subModal(t) {
 
 function workHtml() {
   const T = S.tasks, on = !!(T && T.mull && T.mull.workOnly);
-  return `<div class="p-card"><h3>Mulling</h3><label class="p-chk"><input type="checkbox" data-wo${on ? ' checked' : ''}${T ? '' : ' disabled'}><span>Work tasks only<small>Skip row 1 (daily tasks) and only feed me row 2 (work tasks)</small></span></label></div>`;
+  return `<div class="p-card"><h3>Mulling</h3><label class="p-chk"><input type="checkbox" data-wo${on ? ' checked' : ''}${T ? '' : ' disabled'}><span>Work tasks only<small>Skip row 1 (daily tasks) and only feed me row 2 (work tasks)</small></span></label><label class="p-chk"><input type="checkbox" data-tally${P.cfg.tally ? ' checked' : ''}><span>Display mulling task tally<small>Show how many mulling tasks are complete under the task box</small></span></label></div>`;
 }
 function setWorkOnly(v) {
   const T = S.tasks; if (!T) return;
@@ -1707,3 +1709,10 @@ $('pomo').addEventListener('mouseover', (e) => {
   if (!m) { tip.hidden = true; return; }
   const n = mullNote(); if (n) gTip(m, n);
 });
+
+function updTally() {
+  const el = $('p-tally'); if (!el) return;
+  if (!P.cfg.tally || !S.tasks) { el.hidden = true; return; }
+  const mp = mullProgress(); el.hidden = false; el.textContent = `Tasks complete: ${mp.done}/${mp.tot}`;
+  el.classList.toggle('all', mp.tot > 0 && mp.done === mp.tot);
+}
