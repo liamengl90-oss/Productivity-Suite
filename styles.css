@@ -572,3 +572,8 @@ body.g-drag{cursor:grabbing;user-select:none}
 .p-msub.on i{background:var(--c)}
 .p-msub.on i::after{content:"";position:absolute;left:3px;top:0;width:3.5px;height:7px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
 .p-msub.on span{color:var(--dim);text-decoration:line-through}
+
+/* ---------- v4.1: note ribbon in Pomodoro box, wider week log for steps ---------- */
+.p-mull{position:relative}
+.p-mull.has-note::after{content:"";position:absolute;top:-1px;right:36px;width:12px;height:16px;background:var(--c);clip-path:polygon(0 0,100% 0,100% 100%,50% 70%,0 100%)}
+.h-colL{width:520px}

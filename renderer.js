@@ -872,7 +872,7 @@ function visual() {
 }
 
 function renderPomo() {
-  const el = $('pomo'), c = P.cfg; el.dataset.mode = P.mode; P.lit = -1;
+  const el = $('pomo'), c = P.cfg; el.dataset.mode = P.mode; P.lit = -1; P.noteEl = null;
   const today = pk(new Date()), st = P.stats[today] || { n: 0, min: 0 };
   const step = (k, label, unit) => `<div class="p-row"><span>${label}</span><div class="p-step"><button data-k="${k}" data-d="-1">−</button><b>${c[k]}${unit}</b><button data-k="${k}" data-d="1">+</button></div></div>`;
   const sw = (k, label) => `<div class="p-row"><span>${label}</span><button class="p-sw${c[k] ? ' on' : ''}" data-t="${k}"><i></i></button></div>`;
@@ -963,7 +963,7 @@ const HK = [
   { k: 'steps', name: 'Steps', color: '#fb7185', dur: false },
 ];
 const HD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-const DK = ['weight', 'cal', 'pro', 'card', 'sleep'];
+const DK = ['weight', 'cal', 'pro', 'card', 'steps', 'sleep'];
 const OK = ['weight', 'cal', 'pro', 'card', 'steps', 'sleep'];
 const DUR = new Set(['card', 'sleep']);
 const H = { year: new Date().getFullYear(), w: [], meat: [], sel: 0, range: 'all', show: { weight: true, cal: true }, saveT: null, created: false, loaded: false, geo: null };
@@ -1005,7 +1005,7 @@ function toMdH() {
   if (logged.length) {
     o += '\n## Daily logs\n';
     logged.forEach((w) => {
-      o += `\n### Week ${w.n} · ${dayLbl(w.start)} – ${dayLbl(w.start + 6)}\n| Day | Weight | Calories | Protein | Cardio | Sleep |\n|---|---|---|---|---|---|\n`;
+      o += `\n### Week ${w.n} · ${dayLbl(w.start)} – ${dayLbl(w.start + 6)}\n| Day | Weight | Calories | Protein | Cardio | Steps | Sleep |\n|---|---|---|---|---|---|---|\n`;
       w.days.forEach((d, i) => { o += `| ${HD[i]} | ${DK.map((k) => cell(k, d[k])).join(' | ')} |\n`; });
       o += `| **Average** | ${DK.map((k) => cell(k, avgOf(vals(w, k)), true)).join(' | ')} |\n`;
     });
@@ -1013,7 +1013,7 @@ function toMdH() {
   return o;
 }
 function fromMdH(text) {
-  let sec = '', wk = null;
+  let sec = '', wk = null, dcols = null;
   const cells = (l) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim().replace(/\*\*/g, ''));
   for (const l of text.split(/\r?\n/)) {
     let m;
@@ -1023,7 +1023,10 @@ function fromMdH(text) {
     const c = cells(l);
     if (sec === 'year overview') { const w = H.w.find((x) => x.n === +c[0]); if (w) OK.forEach((k, i) => { w.ov[k] = rd(k, c[3 + i]); }); }
     else if (sec === 'meat schedule') { const i = HD.indexOf(c[0]); if (i >= 0) H.meat[i] = { meat: c[1] || '', notes: c[2] || '' }; }
-    else if (sec === 'daily logs' && wk) { const i = HD.indexOf(c[0]); if (i >= 0) DK.forEach((k, j) => { wk.days[i][k] = rd(k, c[1 + j]); }); }
+    else if (sec === 'daily logs' && wk) {
+      if (c[0] === 'Day') dcols = c.slice(1).map((h) => ({ weight: 'weight', calories: 'cal', protein: 'pro', cardio: 'card', steps: 'steps', sleep: 'sleep' })[h.toLowerCase()]);
+      else { const i = HD.indexOf(c[0]); if (i >= 0) (dcols || DK).forEach((k, j) => { if (k) wk.days[i][k] = rd(k, c[1 + j]); }); }
+    }
   }
 }
 /* health:data:end */
@@ -1127,7 +1130,7 @@ function chartSVG(idx, act, W0) {
       if (n <= 30 || seg.length === 1) seg.forEach((p) => { body += `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3" fill="${s.color}"/>`; });
     });
   });
-  [[used[0], 'start', L - 10], [used[1], 'end', Wd - R + 10]].forEach(([u, anchor, x]) => {
+  (() => { const wu = used.find((u) => u.s.k === 'weight'), lu = wu ? used.find((u) => u !== wu) : used[0], ru = wu || used[1]; return [[lu, 'start', L - 10], [ru, 'end', Wd - R + 10]]; })().forEach(([u, anchor, x]) => {
     if (!u) return;
     for (let g = 0; g <= 4; g++) { const v = u.mn + (1 - g / 4) * (u.mx - u.mn); axes += `<text x="${x}" y="${T + (g / 4) * ph + 4}" text-anchor="${anchor === 'start' ? 'end' : 'start'}" fill="${u.s.color}" class="h-ax">${fmtVal(u.s.k, v)}</text>`; }
   });
@@ -1194,9 +1197,9 @@ function renderHDaily() {
   const w = H.w[H.sel], el = $('h-daily');
   const rows = HD.map((d, i) => `<tr><td class="dn">${d}<small>${new Date((w.start + i) * 864e5).getUTCDate()}</small></td>${DK.map((k) => `<td><input class="h-in" data-s="d" data-r="${i}" data-c="${k}" value="${inStr(k, w.days[i][k])}"></td>`).join('')}</tr>`).join('');
   el.innerHTML = `<div class="h-ch"><h3>Week log</h3><div class="h-wk"><button data-h="wprev">‹</button><span>Week ${w.n} · ${dayLbl(w.start)} – ${dayLbl(w.start + 6)}</span><button data-h="wnext">›</button></div></div>
-    <table class="h-tbl h-wtbl"><thead><tr><th>Day</th><th>Weight</th><th>Calories</th><th>Protein</th><th>Cardio</th><th>Sleep</th></tr></thead><tbody>${rows}</tbody>
+    <table class="h-tbl h-wtbl"><thead><tr><th>Day</th><th>Weight</th><th>Calories</th><th>Protein</th><th>Cardio</th><th>Steps</th><th>Sleep</th></tr></thead><tbody>${rows}</tbody>
     <tfoot><tr><td>Average</td>${DK.map((k) => `<td id="h-avg-${k}"></td>`).join('')}</tr></tfoot></table>
-    <div class="h-actions"><button data-h="fill" title="Writes this week's average weight, calories, protein and sleep, and total cardio, into the year table">Copy to year table</button><span class="h-hint">Cardio and sleep accept 7h 30m, 7:30 or plain minutes.</span></div>`;
+    <div class="h-actions"><button data-h="fill" title="Writes this week's average weight, calories, protein, steps and sleep, and total cardio, into the year table">Copy to year table</button><span class="h-hint">Cardio and sleep accept 7h 30m, 7:30 or plain minutes.</span></div>`;
   hFoot();
 }
 function hFoot() {
@@ -1244,7 +1247,7 @@ hEl.addEventListener('click', async (e) => {
   else if (a === 'wnext') hSelect(H.sel + 1);
   else if (a === 'fill') {
     const w = H.w[H.sel], f = {};
-    ['weight', 'cal', 'pro', 'sleep'].forEach((k) => { const v = vals(w, k); if (v.length) f[k] = k === 'weight' ? Math.round(avgOf(v) * 10) / 10 : Math.round(avgOf(v)); });
+    ['weight', 'cal', 'pro', 'steps', 'sleep'].forEach((k) => { const v = vals(w, k); if (v.length) f[k] = k === 'weight' ? Math.round(avgOf(v) * 10) / 10 : Math.round(avgOf(v)); });
     const c = vals(w, 'card'); if (c.length) f.card = sum(c);
     if (!Object.keys(f).length) return;
     if (Object.keys(f).some((k) => w.ov[k] != null) && !confirm(`Replace the values already in week ${w.n} of the year table?`)) return;
@@ -1619,14 +1622,14 @@ function mullHtml() {
     const tail = done ? (left ? '<button class="p-mnext" data-mull="next">Assign next task</button>' : '<small class="p-mall">That was the last one</small>') : '';
     if (f.group) {
       const subs = f.t.subs.filter((x) => !x.noMull), nd = subs.filter((x) => x.done).length;
-      return `<div class="p-mull grp${done ? ' done' : ''}" id="p-mull" style="--c:${col}"><div class="p-mrow"><button class="p-mbox" data-mull="tick" title="${done ? 'Untick all' : 'Tick all'}"></button><div class="p-mt"><b>${esc(f.t.text)}</b><small>${esc(f.c.name)} · ${nd}/${subs.length}</small></div>${tail}</div><div class="p-msubs">${subs.map((x) => `<button class="p-msub${x.done ? ' on' : ''}" data-mull="sub" data-sid="${x.id}"><i></i><span>${esc(x.text)}</span></button>`).join('')}</div></div>`;
+      return `<div class="p-mull grp${done ? ' done' : ''}${f.t.note ? ' has-note' : ''}" id="p-mull" style="--c:${col}"><div class="p-mrow"><button class="p-mbox" data-mull="tick" title="${done ? 'Untick all' : 'Tick all'}"></button><div class="p-mt"><b>${esc(f.t.text)}</b><small>${esc(f.c.name)} · ${nd}/${subs.length}</small></div>${tail}</div><div class="p-msubs">${subs.map((x) => `<button class="p-msub${x.done ? ' on' : ''}" data-mull="sub" data-sid="${x.id}"><i></i><span>${esc(x.text)}</span></button>`).join('')}</div></div>`;
     }
     const title = f.s ? f.s.text : f.t.text, crumb = f.s ? `${f.c.name} › ${f.t.text}` : f.c.name;
-    return `<div class="p-mull${done ? ' done' : ''}" id="p-mull" style="--c:${col}"><button class="p-mbox" data-mull="tick" title="${done ? 'Mark as not done' : 'Mark as done'}"></button><div class="p-mt"><b>${esc(title)}</b><small>${esc(crumb)}</small></div>${tail}</div>`;
+    return `<div class="p-mull${done ? ' done' : ''}${f.t.note ? ' has-note' : ''}" id="p-mull" style="--c:${col}"><button class="p-mbox" data-mull="tick" title="${done ? 'Mark as not done' : 'Mark as done'}"></button><div class="p-mt"><b>${esc(title)}</b><small>${esc(crumb)}</small></div>${tail}</div>`;
   }
   return `<div class="p-mull idle" id="p-mull">${left ? '<span>Ready when you are</span><button class="p-mnext" data-mull="next">Assign a task</button>' : '<span>Nothing left to mull. Everything’s ticked off.</span>'}</div>`;
 }
-function renderMull() { const el = $('p-mull'); if (el) el.outerHTML = mullHtml(); updPomo(); }
+function renderMull() { const el = $('p-mull'); P.noteEl = null; tip.hidden = true; if (el) el.outerHTML = mullHtml(); updPomo(); }
 function mullAct(a, sid) {
   const T = S.tasks; if (!T) return; const M = T.mull;
   if (a === 'next') mullAssign();
@@ -1692,4 +1695,15 @@ let resizeT;
 window.addEventListener('resize', () => {
   clearTimeout(resizeT);
   resizeT = setTimeout(() => { if (S.view === 'health') renderHMain(); else if (S.view === 'finance') renderFCharts(fStats()); }, 150);
+});
+
+function mullNote() {
+  const T = S.tasks, M = T && T.mull; if (!M || !M.cur) return '';
+  const f = mullFind(M.cur); return f.ok && f.t.note ? f.t.note : '';
+}
+$('pomo').addEventListener('mouseover', (e) => {
+  const m = e.target.closest && e.target.closest('.p-mull.has-note');
+  if (m === P.noteEl) return; P.noteEl = m;
+  if (!m) { tip.hidden = true; return; }
+  const n = mullNote(); if (n) gTip(m, n);
 });
