@@ -508,3 +508,67 @@ body.g-drag{cursor:grabbing;user-select:none}
 .p-chk{display:flex;align-items:flex-start;gap:10px;margin-top:6px;color:var(--text);cursor:pointer}
 .p-chk input{flex:none;width:16px;height:16px;margin-top:3px;accent-color:var(--pa)}
 .p-chk small{display:block;color:var(--dim)}
+
+/* ================= v4: compact tasks, capped Health/Finance, readable tables, tether ================= */
+.tasks .t-head{padding:12px 24px 6px}
+.tasks .t-head h1{font-size:22px}
+.tasks .t-prog{height:6px}
+.t-board{padding:4px 24px 28px;gap:10px}
+.t-line{gap:12px}
+.t-sech{margin:0 0 7px;font-size:13px}
+.t-col{width:240px;padding-bottom:6px}
+.t-ch{padding:10px 12px 5px}
+.t-name{font-size:15px}
+.t-count{padding:0 7px;font-size:11px}
+.t-bar{height:2px;margin:0 12px 4px}
+.t-row{gap:8px;margin:0 4px;padding:3px 8px 3px 6px}
+.t-box{width:16px;height:16px;border-width:2px;border-radius:5px}
+.t-row.done .t-box::after,.t-row.mm-on .t-box::after{left:4px;top:.5px;width:4px;height:8px}
+.t-row.mm-part .t-box::after{left:2.5px;right:2.5px;top:5.5px}
+.t-text{font-size:13px;line-height:1.3}
+.t-sub{margin-left:18px;padding-top:2px;padding-bottom:2px}
+.t-sub .t-box{width:14px;height:14px;margin-top:2px}
+.t-sub.done .t-box::after,.t-sub.mm-on .t-box::after{left:3px;top:0;width:3.5px;height:7px}
+.t-sub .t-text{font-size:12.5px}
+.t-cbox{width:16px;height:16px}
+.t-cbox.on::after{left:4px;top:.5px;width:4px;height:8px}
+.t-add{margin:4px 8px 0;padding:4px 8px;font-size:12.5px}
+.t-ghost,.t-ghost-in{width:240px;height:46px}
+.t-grp{position:relative}
+.t-grp::after{content:"";position:absolute;right:3px;top:5px;bottom:5px;width:7px;border:2px solid var(--c);border-left:0;border-radius:0 6px 6px 0;opacity:.55;pointer-events:none}
+.tasks.mulling .t-grp::after{opacity:1;box-shadow:0 0 8px color-mix(in srgb,var(--c) 45%,transparent)}
+.t-grp .t-row{padding-right:18px}
+
+.health .t-head,.finance .t-head{width:100%;max-width:1264px;align-self:center}
+.h-scroll>*,.f-scroll>*{width:100%;max-width:1200px;align-self:center}
+.h-chart svg{max-width:100%}
+.h-yscroll{max-height:72vh}
+.h-ytbl,.h-wtbl{border-collapse:collapse;font-variant-numeric:tabular-nums}
+.h-ytbl{width:100%;table-layout:fixed}
+.h-ytbl th,.h-wtbl th{padding:5px 8px;text-align:right;font-weight:500;color:var(--dim);border:1px solid #2a2a3a;background:#14141d}
+.h-ytbl th:nth-child(-n+3),.h-wtbl th:first-child{text-align:left}
+.h-ytbl td,.h-wtbl td{padding:0;border:1px solid #262636}
+.h-ytbl td.mo{padding:6px 8px;vertical-align:top;font-weight:600;color:var(--hi);background:color-mix(in srgb,var(--pa) 12%,#14141d)}
+.h-ytbl tr.m1 td.mo{background:color-mix(in srgb,var(--pb) 18%,#14141d)}
+.h-ytbl td.wk{width:34px;text-align:center;color:var(--dim);cursor:pointer}
+.h-ytbl td.dt{padding:0 8px;white-space:nowrap;cursor:pointer;color:var(--text)}
+.h-ytbl tr.m1 td:not(.mo){background:#ffffff05}
+.h-ytbl tr.sel td:not(.mo){background:color-mix(in srgb,var(--pa) 14%,transparent)}
+.h-ytbl tr.gap td{height:8px;padding:0;border:0;background:transparent}
+.h-ytbl .h-in,.h-wtbl .h-in{width:100%;height:26px;padding:0 8px;text-align:right;color:var(--hi);font-size:13px;border:0;border-radius:0;background:transparent}
+.h-wtbl .h-in{height:28px}
+.h-ytbl .h-in:hover,.h-wtbl .h-in:hover{background:#ffffff0a}
+.h-ytbl .h-in:focus,.h-wtbl .h-in:focus{outline:1px solid var(--pa);outline-offset:-1px;background:var(--bg)}
+.h-wtbl td.dn{padding:0 8px}
+.h-wtbl tfoot td{padding:6px 8px;text-align:right;font-weight:600;color:var(--hi);background:#14141d;border:1px solid #262636}
+.h-wtbl tfoot td:first-child{text-align:left}
+
+.p-mull.grp{flex-direction:column;align-items:stretch;gap:4px;border-radius:22px}
+.p-mrow{display:flex;align-items:center;gap:12px}
+.p-msubs{display:flex;flex-direction:column;gap:1px;max-height:190px;overflow:auto;margin:2px 4px 2px 38px}
+.p-msub{display:flex;align-items:center;gap:8px;padding:3px 6px;border:0;border-radius:8px;background:none;color:var(--text);text-align:left}
+.p-msub:hover{background:#ffffff0a}
+.p-msub i{flex:none;position:relative;width:14px;height:14px;border:2px solid var(--c);border-radius:4px}
+.p-msub.on i{background:var(--c)}
+.p-msub.on i::after{content:"";position:absolute;left:3px;top:0;width:3.5px;height:7px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.p-msub.on span{color:var(--dim);text-decoration:line-through}

@@ -442,6 +442,7 @@ function colEl(c, ci) {
       e.preventDefault(); tip.hidden = true;
       ctxAt(e, [
         ['Add subtasks…', () => subModal(t)],
+        mm && hasSubs && [t.tether ? 'Untether subtasks' : 'Tether subtasks', () => { t.tether = !t.tether; tChanged(); }],
         [t.note ? 'Edit note' : 'Add note', () => noteModal(t)],
         ['Rename', rename],
         ti > 0 && ['Move up', () => { mv(c.tasks, ti, -1); tChanged(); }],
@@ -450,8 +451,11 @@ function colEl(c, ci) {
         ['Delete task', () => { c.tasks.splice(ti, 1); tChanged(); }, 'danger'],
       ].filter((x) => x !== false));
     };
-    list.appendChild(r);
-    if (hasSubs && !t.collapsed) t.subs.forEach((x, si) => list.appendChild(subRow(t, x, si)));
+    if (hasSubs && t.tether) {
+      const grp = document.createElement('div'); grp.className = 't-grp'; grp.appendChild(r);
+      if (!t.collapsed) t.subs.forEach((x, si) => grp.appendChild(subRow(t, x, si)));
+      list.appendChild(grp);
+    } else { list.appendChild(r); if (hasSubs && !t.collapsed) t.subs.forEach((x, si) => list.appendChild(subRow(t, x, si))); }
   });
   const add = document.createElement('input'); add.className = 't-add'; add.placeholder = '+ Add task'; add.dataset.cat = c.id;
   add.onkeydown = (e) => { if (e.key === 'Enter' && add.value.trim()) { c.tasks.push({ id: uid(), text: add.value.trim(), done: false, note: '', subs: [] }); S.focusAdd = c.id; tChanged(); } };
@@ -925,7 +929,7 @@ function updPomo() {
 
 $('pomo').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
-  if (b.dataset.mull) { mullAct(b.dataset.mull); return; }
+  if (b.dataset.mull) { mullAct(b.dataset.mull, b.dataset.sid); return; }
   if (b.dataset.sty) { P.cfg.style = b.dataset.sty; pSaveSoon(); renderPomo(); }
   else if (b.dataset.m) setMode(b.dataset.m, false);
   else if (b.dataset.k) {
@@ -1102,8 +1106,8 @@ function segments(pts, X, Y) {
   if (seg.length) out.push(seg);
   return out;
 }
-function chartSVG(idx, act) {
-  const Wd = 900, Ht = 310, L = 60, R = 60, T = 16, Bm = 46, pw = Wd - L - R, ph = Ht - T - Bm, n = idx.length;
+function chartSVG(idx, act, W0) {
+  const Wd = W0 || 900, Ht = 300, L = 60, R = 60, T = 16, Bm = 46, pw = Wd - L - R, ph = Ht - T - Bm, n = idx.length;
   const X = (j) => L + (n === 1 ? pw / 2 : (j / (n - 1)) * pw), bottom = T + ph;
   let defs = '', body = '', axes = '', grid = '';
   for (let g = 0; g <= 4; g++) { const y = T + (g / 4) * ph; grid += `<line x1="${L}" x2="${Wd - R}" y1="${y}" y2="${y}" class="h-grid-l"/>`; }
@@ -1130,7 +1134,7 @@ function chartSVG(idx, act) {
   const step = n > 26 ? 4 : n > 12 ? 2 : 1; let xl = '';
   idx.forEach((i, j) => { if (j % step === 0) xl += `<text x="${X(j).toFixed(1)}" y="${Ht - 24}" text-anchor="middle" class="h-ax">W${H.w[i].n}</text><text x="${X(j).toFixed(1)}" y="${Ht - 9}" text-anchor="middle" class="h-ax dim">${H.w[i].mid}</text>`; });
   H.geo = { X, n, L, pw, Wd, used, top: T, bottom };
-  return `<div class="h-chart"><svg viewBox="0 0 ${Wd} ${Ht}"><defs>${defs}</defs>${grid}${body}${axes}${xl}<line id="h-vl" y1="${T}" y2="${bottom}" class="h-vl" style="display:none"/>${used.map((u) => `<circle id="h-dot-${u.s.k}" r="5" fill="${u.s.color}" stroke="#0a0a0f" stroke-width="2" style="display:none"/>`).join('')}</svg><div class="h-tip"></div></div>`;
+  return `<div class="h-chart"><svg viewBox="0 0 ${Wd} ${Ht}" width="${Wd}" height="${Ht}"><defs>${defs}</defs>${grid}${body}${axes}${xl}<line id="h-vl" y1="${T}" y2="${bottom}" class="h-vl" style="display:none"/>${used.map((u) => `<circle id="h-dot-${u.s.k}" r="5" fill="${u.s.color}" stroke="#0a0a0f" stroke-width="2" style="display:none"/>`).join('')}</svg><div class="h-tip"></div></div>`;
 }
 function bindHover(idx) {
   const box = $('h-main').querySelector('.h-chart'), svg = box.querySelector('svg'), tp = box.querySelector('.h-tip'), g = H.geo, vl = $('h-vl');
@@ -1156,7 +1160,7 @@ function renderHMain() {
   const rng = [['all', 'All data'], ['12', 'Last 12 weeks'], ['year', 'Full year']].map(([v, l]) => `<button data-h="range" data-v="${v}" class="${H.range === v ? 'on' : ''}">${l}</button>`).join('');
   const has = act.some((x) => idx.some((i) => H.w[i].ov[x.k] != null));
   el.innerHTML = `<div class="h-ch"><h3>Trends</h3><div class="h-chips">${chips}</div><div class="seg">${rng}</div></div>` +
-    (has ? chartSVG(idx, act) : `<div class="h-empty">${act.length ? 'Add weekly values in the year table below and your trends will show up here.' : 'Switch on at least one measure above.'}</div>`);
+    (has ? chartSVG(idx, act, chartW('h-main')) : `<div class="h-empty">${act.length ? 'Add weekly values in the year table below and your trends will show up here.' : 'Switch on at least one measure above.'}</div>`);
   if (has) bindHover(idx);
 }
 
@@ -1188,9 +1192,9 @@ function renderHMinis() {
 }
 function renderHDaily() {
   const w = H.w[H.sel], el = $('h-daily');
-  const rows = HD.map((d, i) => `<tr><td class="dn">${d}<small>${new Date((w.start + i) * 864e5).getUTCDate()}</small></td>${DK.map((k) => `<td><input class="h-in" data-s="d" data-r="${i}" data-c="${k}" value="${inStr(k, w.days[i][k])}" placeholder="–"></td>`).join('')}</tr>`).join('');
+  const rows = HD.map((d, i) => `<tr><td class="dn">${d}<small>${new Date((w.start + i) * 864e5).getUTCDate()}</small></td>${DK.map((k) => `<td><input class="h-in" data-s="d" data-r="${i}" data-c="${k}" value="${inStr(k, w.days[i][k])}"></td>`).join('')}</tr>`).join('');
   el.innerHTML = `<div class="h-ch"><h3>Week log</h3><div class="h-wk"><button data-h="wprev">‹</button><span>Week ${w.n} · ${dayLbl(w.start)} – ${dayLbl(w.start + 6)}</span><button data-h="wnext">›</button></div></div>
-    <table class="h-tbl"><thead><tr><th>Day</th><th>Weight</th><th>Calories</th><th>Protein</th><th>Cardio</th><th>Sleep</th></tr></thead><tbody>${rows}</tbody>
+    <table class="h-tbl h-wtbl"><thead><tr><th>Day</th><th>Weight</th><th>Calories</th><th>Protein</th><th>Cardio</th><th>Sleep</th></tr></thead><tbody>${rows}</tbody>
     <tfoot><tr><td>Average</td>${DK.map((k) => `<td id="h-avg-${k}"></td>`).join('')}</tr></tfoot></table>
     <div class="h-actions"><button data-h="fill" title="Writes this week's average weight, calories, protein and sleep, and total cardio, into the year table">Copy to year table</button><span class="h-hint">Cardio and sleep accept 7h 30m, 7:30 or plain minutes.</span></div>`;
   hFoot();
@@ -1204,10 +1208,23 @@ function renderHMeat() {
 }
 function renderHYear() {
   const t = todayN(), names = { weight: 'Weight', cal: 'Calories', pro: 'Protein', card: 'Cardio', steps: 'Steps', sleep: 'Sleep' };
-  const rows = H.w.map((w, i) => `<tr data-wi="${i}" class="m${new Date((w.start + 3) * 864e5).getUTCMonth() % 2}${i === H.sel ? ' sel' : ''}${t >= w.start && t <= w.start + 6 ? ' now' : ''}"><td class="wk">${w.n}</td><td class="dt">${dayLbl(w.start)} – ${dayLbl(w.start + 6)}<small>${w.months}</small></td>${OK.map((k) => `<td><input class="h-in" data-s="o" data-r="${i}" data-c="${k}" value="${inStr(k, w.ov[k])}" placeholder="–"></td>`).join('')}</tr>`).join('');
+  const midM = (w) => new Date((w.start + 3) * 864e5).getUTCMonth();
+  const monthName = (w) => new Date((w.start + 3) * 864e5).toLocaleDateString('en', { month: 'long', timeZone: 'UTC' });
+  const range = (w) => `${dayLbl(w.start)}–${mon(w.start) === mon(w.start + 6) ? new Date((w.start + 6) * 864e5).getUTCDate() : dayLbl(w.start + 6)}`;
+  let rows = '', i = 0;
+  while (i < H.w.length) {
+    let j = i; while (j < H.w.length && midM(H.w[j]) === midM(H.w[i])) j++;
+    for (let k = i; k < j; k++) {
+      const w = H.w[k];
+      rows += `<tr data-wi="${k}" class="m${midM(w) % 2}${k === H.sel ? ' sel' : ''}${t >= w.start && t <= w.start + 6 ? ' now' : ''}">${k === i ? `<td class="mo" rowspan="${j - i}">${monthName(w)}</td>` : ''}<td class="wk">${w.n}</td><td class="dt">${range(w)}</td>${OK.map((key) => `<td><input class="h-in" data-s="o" data-r="${k}" data-c="${key}" value="${inStr(key, w.ov[key])}"></td>`).join('')}</tr>`;
+    }
+    if (j < H.w.length) rows += '<tr class="gap"><td colspan="9"></td></tr>';
+    i = j;
+  }
   $('h-year').innerHTML = `<div class="h-ch"><h3>Year overview</h3><span class="h-hint">Typed in by hand. Nothing here is filled in for you.</span></div>
-    <div class="h-yscroll"><table class="h-tbl h-ytbl"><thead><tr><th>Wk</th><th>Dates</th>${OK.map((k) => `<th>${names[k]}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
-  const sel = $('h-year').querySelector('tr.sel'); if (sel) sel.scrollIntoView({ block: 'center' });
+    <div class="h-yscroll"><table class="h-ytbl"><colgroup><col style="width:78px"><col style="width:34px"><col style="width:112px">${OK.map(() => '<col>').join('')}</colgroup><thead><tr><th>Month</th><th>Wk</th><th>Dates</th>${OK.map((k) => `<th>${names[k]}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  const ys = $('h-year').querySelector('.h-yscroll'), sel = $('h-year').querySelector('tr.sel');
+  if (ys && sel) ys.scrollTop = Math.max(0, sel.offsetTop - ys.clientHeight / 2);
 }
 function hSelect(i) {
   H.sel = Math.max(0, Math.min(H.w.length - 1, i));
@@ -1388,9 +1405,9 @@ function renderFStats(st) {
     <div class="h-stat" style="--c:#22d3ee"><small>Daily average</small><b>${a ? (a.missing ? '…' : money(a.avg)) : '–'}</b><small>${a ? (cm ? 'over the last 30 days' : `30 days up to ${dayLbl(a.end)}`) : 'no data for future months'}</small></div>`;
 }
 
-function fDaily(st) {
+function fDaily(st, W0) {
   if (!st.total) return '<div class="h-empty">Add a transaction to see how the month is going.</div>';
-  const Wd = 900, Ht = 280, L = 58, R = 58, T = 14, Bm = 30, pw = Wd - L - R, ph = Ht - T - Bm, n = st.dim, step = pw / n, bw = Math.max(4, step * 0.62);
+  const Wd = W0 || 900, Ht = 270, L = 58, R = 58, T = 14, Bm = 30, pw = Wd - L - R, ph = Ht - T - Bm, n = st.dim, step = pw / n, bw = Math.max(4, step * 0.62);
   const mxB = Math.max(...st.byDay, 1); let run = 0; const cum = st.byDay.map((v) => (run += v));
   const now = ymNow(), upto = F.ym === now ? new Date().getDate() : n, mxC = Math.max(run, 1);
   const X = (i) => L + step * i + step / 2, Yb = (v) => T + ph - (v / mxB) * ph, Yc = (v) => T + ph - (v / mxC) * ph;
@@ -1400,7 +1417,7 @@ function fDaily(st) {
   s += `<path d="M${cum.slice(0, upto).map((c, i) => `${X(i).toFixed(1)} ${Yc(c).toFixed(1)}`).join(' L')}" fill="none" stroke="#22d3ee" stroke-width="2.4" stroke-linejoin="round" style="filter:drop-shadow(0 0 5px #22d3ee)"/>`;
   for (let i = 0; i < n; i += n > 20 ? 2 : 1) s += `<text x="${X(i).toFixed(1)}" y="${Ht - 10}" text-anchor="middle" class="h-ax">${i + 1}</text>`;
   F.geo = { X, n, L, Wd, cum, byDay: st.byDay, Yc, step };
-  return `<div class="h-chart f-chart"><svg viewBox="0 0 ${Wd} ${Ht}">${s}<line id="f-vl" y1="${T}" y2="${T + ph}" class="h-vl" style="display:none"/><circle id="f-dot" r="5" fill="#22d3ee" stroke="#0a0a0f" stroke-width="2" style="display:none"/></svg><div class="h-tip"></div></div>`;
+  return `<div class="h-chart f-chart"><svg viewBox="0 0 ${Wd} ${Ht}" width="${Wd}" height="${Ht}">${s}<line id="f-vl" y1="${T}" y2="${T + ph}" class="h-vl" style="display:none"/><circle id="f-dot" r="5" fill="#22d3ee" stroke="#0a0a0f" stroke-width="2" style="display:none"/></svg><div class="h-tip"></div></div>`;
 }
 function bindFDaily() {
   const box = $('f-charts').querySelector('.f-chart'); if (!box) return;
@@ -1433,7 +1450,7 @@ function fHeat(st) {
 }
 function renderFCharts(st) {
   $('f-charts').innerHTML = `
-    <div class="p-card f-wide"><div class="h-ch"><h3>Daily spending</h3><span class="h-hint">bars: per day · line: running total</span></div>${fDaily(st)}</div>
+    <div class="p-card f-wide"><div class="h-ch"><h3>Daily spending</h3><span class="h-hint">bars: per day · line: running total</span></div>${fDaily(st, chartW('f-charts'))}</div>
     <div class="p-card"><div class="h-ch"><h3>Where it goes</h3><span class="h-hint">click to filter</span></div>${fDonut(st)}</div>
     <div class="p-card"><div class="h-ch"><h3>By day of week</h3></div>${st.total ? bars(st.byDow, HD, '#22d3ee', short) : '<div class="h-empty">Nothing yet.</div>'}</div>`;
   bindFDaily();
@@ -1561,17 +1578,19 @@ function mullProgress() {
 function mullNext(c) {
   if (c.noMull || (S.tasks.mull && S.tasks.mull.workOnly && !c.row)) return null;
   for (const t of c.tasks) {
-    if (t.subs && t.subs.length) { const s = t.subs.find((x) => !x.done && !x.noMull); if (s) return { cid: c.id, tid: t.id, sid: s.id }; }
-    else if (!t.done && !t.noMull) return { cid: c.id, tid: t.id, sid: null };
+    if (t.subs && t.subs.length) {
+      const open = t.subs.filter((x) => !x.done && !x.noMull);
+      if (open.length) return t.tether ? { cid: c.id, tid: t.id, sid: null, group: true } : { cid: c.id, tid: t.id, sid: open[0].id };
+    } else if (!t.done && !t.noMull) return { cid: c.id, tid: t.id, sid: null };
   }
   return null;
 }
 function mullFind(it) {
   const c = S.tasks.categories.find((x) => x.id === it.cid), t = c && c.tasks.find((x) => x.id === it.tid), s = t && it.sid ? (t.subs || []).find((x) => x.id === it.sid) : null;
-  return { c, t, s, ok: !!(c && t && (!it.sid || s)) };
+  return { c, t, s, group: !!it.group, ok: !!(c && t && (it.group || !it.sid || s)) };
 }
-const mullDone = (it) => { const f = mullFind(it); return f.ok ? (it.sid ? f.s.done : f.t.done) : false; };
-const mullIn = (f) => !f.c.noMull && !(S.tasks.mull && S.tasks.mull.workOnly && !f.c.row) && !(f.s ? f.s.noMull : f.t.noMull);
+const mullDone = (it) => { const f = mullFind(it); if (!f.ok) return false; if (it.group) return f.t.subs.filter((x) => !x.noMull).every((x) => x.done); return it.sid ? f.s.done : f.t.done; };
+const mullIn = (f) => !f.c.noMull && !(S.tasks.mull && S.tasks.mull.workOnly && !f.c.row) && (f.group ? taskMullState(f.t) !== 'off' : !(f.s ? f.s.noMull : f.t.noMull));
 function mullAssign() {
   const T = S.tasks, M = T.mull || (T.mull = { cur: null, served: [], last: null }), cands = T.categories.filter((c) => mullNext(c));
   if (!cands.length) { M.cur = null; return false; }
@@ -1590,24 +1609,36 @@ async function loadTasksData() {
 }
 function mullText() {
   const T = S.tasks, M = T && T.mull; if (!M || !M.cur) return '';
-  const f = mullFind(M.cur); return f.ok && !mullDone(M.cur) && mullIn(f) ? (f.s ? f.s.text : f.t.text) : '';
+  const f = mullFind(M.cur); return f.ok && !mullDone(M.cur) && mullIn(f) ? (f.group ? f.t.text : f.s ? f.s.text : f.t.text) : '';
 }
 function mullHtml() {
   const T = S.tasks; if (!T) return '<div class="p-mull idle" id="p-mull"><span>Loading tasks…</span></div>';
   const M = T.mull, f0 = M && M.cur ? mullFind(M.cur) : null, f = f0 && f0.ok && (mullDone(M.cur) || mullIn(f0)) ? f0 : null, left = T.categories.some((c) => mullNext(c));
   if (f && f.ok) {
-    const done = mullDone(M.cur), col = PAL[f.c.color % PAL.length], title = f.s ? f.s.text : f.t.text, crumb = f.s ? `${f.c.name} › ${f.t.text}` : f.c.name;
-    return `<div class="p-mull${done ? ' done' : ''}" id="p-mull" style="--c:${col}"><button class="p-mbox" data-mull="tick" title="${done ? 'Mark as not done' : 'Mark as done'}"></button><div class="p-mt"><b>${esc(title)}</b><small>${esc(crumb)}</small></div>${done ? (left ? '<button class="p-mnext" data-mull="next">Assign next task</button>' : '<small class="p-mall">That was the last one</small>') : ''}</div>`;
+    const done = mullDone(M.cur), col = PAL[f.c.color % PAL.length];
+    const tail = done ? (left ? '<button class="p-mnext" data-mull="next">Assign next task</button>' : '<small class="p-mall">That was the last one</small>') : '';
+    if (f.group) {
+      const subs = f.t.subs.filter((x) => !x.noMull), nd = subs.filter((x) => x.done).length;
+      return `<div class="p-mull grp${done ? ' done' : ''}" id="p-mull" style="--c:${col}"><div class="p-mrow"><button class="p-mbox" data-mull="tick" title="${done ? 'Untick all' : 'Tick all'}"></button><div class="p-mt"><b>${esc(f.t.text)}</b><small>${esc(f.c.name)} · ${nd}/${subs.length}</small></div>${tail}</div><div class="p-msubs">${subs.map((x) => `<button class="p-msub${x.done ? ' on' : ''}" data-mull="sub" data-sid="${x.id}"><i></i><span>${esc(x.text)}</span></button>`).join('')}</div></div>`;
+    }
+    const title = f.s ? f.s.text : f.t.text, crumb = f.s ? `${f.c.name} › ${f.t.text}` : f.c.name;
+    return `<div class="p-mull${done ? ' done' : ''}" id="p-mull" style="--c:${col}"><button class="p-mbox" data-mull="tick" title="${done ? 'Mark as not done' : 'Mark as done'}"></button><div class="p-mt"><b>${esc(title)}</b><small>${esc(crumb)}</small></div>${tail}</div>`;
   }
   return `<div class="p-mull idle" id="p-mull">${left ? '<span>Ready when you are</span><button class="p-mnext" data-mull="next">Assign a task</button>' : '<span>Nothing left to mull. Everything’s ticked off.</span>'}</div>`;
 }
 function renderMull() { const el = $('p-mull'); if (el) el.outerHTML = mullHtml(); updPomo(); }
-function mullAct(a) {
-  const T = S.tasks; if (!T) return;
+function mullAct(a, sid) {
+  const T = S.tasks; if (!T) return; const M = T.mull;
   if (a === 'next') mullAssign();
-  else if (a === 'tick' && T.mull && T.mull.cur) {
-    const f = mullFind(T.mull.cur); if (!f.ok) return; const v = !mullDone(T.mull.cur);
-    if (f.s) { f.s.done = v; f.t.done = f.t.subs.every((x) => x.done); } else setTaskDone(f.t, v);
+  else if (M && M.cur) {
+    const f = mullFind(M.cur); if (!f.ok) return;
+    if (a === 'tick') {
+      const v = !mullDone(M.cur);
+      if (f.group) { f.t.subs.forEach((x) => { if (!x.noMull) x.done = v; }); f.t.done = f.t.subs.every((x) => x.done); }
+      else if (f.s) { f.s.done = v; f.t.done = f.t.subs.every((x) => x.done); } else setTaskDone(f.t, v);
+    } else if (a === 'sub' && f.group) {
+      const s = f.t.subs.find((x) => x.id === sid); if (s) { s.done = !s.done; f.t.done = f.t.subs.every((x) => x.done); }
+    }
   }
   tChanged(); renderMull();
 }
@@ -1654,3 +1685,11 @@ function setWorkOnly(v) {
   const M = T.mull || (T.mull = { cur: null, served: [], last: null });
   M.workOnly = v; M.served = []; tChanged(); renderMull();
 }
+
+/* ---------- chart sizing ---------- */
+const chartW = (id) => Math.max(360, Math.floor(($(id).clientWidth || 0) - 34));
+let resizeT;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeT);
+  resizeT = setTimeout(() => { if (S.view === 'health') renderHMain(); else if (S.view === 'finance') renderFCharts(fStats()); }, 150);
+});
