@@ -1009,7 +1009,7 @@ function toMdH() {
     logged.forEach((w) => {
       o += `\n### Week ${w.n} · ${dayLbl(w.start)} – ${dayLbl(w.start + 6)}\n| Day | Weight | Calories | Protein | Cardio | Steps | Sleep |\n|---|---|---|---|---|---|---|\n`;
       w.days.forEach((d, i) => { o += `| ${HD[i]} | ${DK.map((k) => cell(k, d[k])).join(' | ')} |\n`; });
-      o += `| **Average** | ${DK.map((k) => cell(k, avgOf(vals(w, k)), true)).join(' | ')} |\n`;
+      o += `| **Weekly summary** | ${DK.map((k) => (k === 'card' ? cell(k, vals(w, k).length ? sum(vals(w, k)) : null) : cell(k, avgOf(vals(w, k)), true))).join(' | ')} |\n`;
     });
   }
   return o;
@@ -1084,7 +1084,8 @@ function renderHStats() {
         big = fmtVal('weight', ws[li]) + '<em>lb</em>';
         if (pi >= 0) { const d = ws[li] - ws[pi]; sub = `${d > 0 ? '+' : d < 0 ? '−' : ''}${Math.abs(d).toFixed(1)} lb since 4 weeks ago`; } else sub = 'Not enough history yet';
       }
-      else { big = fmtVal(x.k, avgOf(recent)) + (x.k === 'cal' ? '<em>kcal</em>' : x.k === 'pro' ? '<em>g</em>' : ''); sub = x.k === 'sleep' ? 'avg per night, last 4 weeks' : x.k === 'card' ? 'avg per week, last 4 weeks' : 'avg, last 4 weeks'; }
+      else if (x.k === 'card') { big = fmtVal(x.k, sum(recent)); sub = 'total, last 4 weeks'; }
+      else { big = fmtVal(x.k, avgOf(recent)) + (x.k === 'cal' ? '<em>kcal</em>' : x.k === 'pro' ? '<em>g</em>' : ''); sub = x.k === 'sleep' ? 'avg per night, last 4 weeks' : 'avg, last 4 weeks'; }
     }
     return `<div class="h-stat" style="--c:${x.color}"><small>${x.name}</small><b>${big || '–'}</b><small>${sub}</small>${spark(all.slice(-12), x.color)}</div>`;
   }).join('');
@@ -1200,13 +1201,13 @@ function renderHDaily() {
   const rows = HD.map((d, i) => `<tr><td class="dn">${d}<small>${new Date((w.start + i) * 864e5).getUTCDate()}</small></td>${DK.map((k) => `<td><input class="h-in" data-s="d" data-r="${i}" data-c="${k}" value="${inStr(k, w.days[i][k])}"></td>`).join('')}</tr>`).join('');
   el.innerHTML = `<div class="h-ch"><h3>Week log</h3><div class="h-wk"><button data-h="wprev">‹</button><span>Week ${w.n} · ${dayLbl(w.start)} – ${dayLbl(w.start + 6)}</span><button data-h="wnext">›</button></div></div>
     <table class="h-tbl h-wtbl"><thead><tr><th>Day</th><th>Weight</th><th>Calories</th><th>Protein</th><th>Cardio</th><th>Steps</th><th>Sleep</th></tr></thead><tbody>${rows}</tbody>
-    <tfoot><tr><td>Average</td>${DK.map((k) => `<td id="h-avg-${k}"></td>`).join('')}</tr></tfoot></table>
+    <tfoot><tr><td></td>${DK.map((k) => `<td id="h-avg-${k}"></td>`).join('')}</tr></tfoot></table>
     <div class="h-actions"><button data-h="fill" title="Writes this week's average weight, calories, protein, steps and sleep, and total cardio, into the year table">Copy to year table</button><span class="h-hint">Cardio and sleep accept 7h 30m, 7:30 or plain minutes.</span></div>`;
   hFoot();
 }
 function hFoot() {
   const w = H.w[H.sel];
-  DK.forEach((k) => { const v = vals(w, k); $('h-avg-' + k).textContent = v.length ? cell(k, avgOf(v), true) : ''; });
+  DK.forEach((k) => { const v = vals(w, k); $('h-avg-' + k).textContent = v.length ? (k === 'card' ? cell(k, sum(v)) : cell(k, avgOf(v), true)) : ''; });
 }
 function renderHMeat() {
   $('h-meat').innerHTML = `<div class="h-ch"><h3>Meat schedule</h3></div><table class="h-tbl"><thead><tr><th>Day</th><th>Meat</th><th>Notes</th></tr></thead><tbody>${HD.map((d, i) => `<tr><td class="dn">${d}</td><td><input class="h-in" data-s="m" data-r="${i}" data-c="meat" value="${esc(H.meat[i].meat).replace(/"/g, '&quot;')}"></td><td><input class="h-in" data-s="m" data-r="${i}" data-c="notes" value="${esc(H.meat[i].notes).replace(/"/g, '&quot;')}"></td></tr>`).join('')}</tbody></table>`;
@@ -1369,9 +1370,13 @@ async function fGo(ym) {
   F.cache[F.ym] = F.tx.slice(); await loadFinance(ym); renderFinance(); fFillCache();
 }
 async function fFillCache() {
-  const r = avg30Range(); if (!r) return; const ym0 = F.ym; let loaded = false;
-  for (const ym of monthsBetween(r[0], r[1])) if (ym !== F.ym && F.cache[ym] === undefined) { const t = await api.financeLoad(ym); F.cache[ym] = t ? parseF(t).tx : []; loaded = true; }
-  if (loaded && S.view === 'finance' && F.ym === ym0) renderFStats(fStats());
+  const ym0 = F.ym, needed = new Set([ymAdd(F.ym, -1)]), r = avg30Range();
+  if (r) monthsBetween(r[0], r[1]).forEach((ym) => needed.add(ym));
+  let loaded = false;
+  for (const ym of needed) if (ym !== F.ym && F.cache[ym] === undefined) {
+    const t = await api.financeLoad(ym); F.cache[ym] = t ? parseF(t).tx : []; loaded = true;
+  }
+  if (loaded && S.view === 'finance' && F.ym === ym0) { renderFStats(fStats()); renderFCharts(fStats()); }
 }
 function fSaveSoon() { clearTimeout(F.saveT); F.saveT = setTimeout(fSaveNow, 500); }
 async function fSaveNow() { clearTimeout(F.saveT); F.saveT = null; await api.financeSave(F.ym, toMdF()); }
@@ -1453,11 +1458,38 @@ function fHeat(st) {
   st.byDay.forEach((v, i) => { cells += `<div class="f-day${i + 1 === now ? ' now' : ''}" title="${i + 1} · ${money(v)}" style="${v ? `background:color-mix(in srgb,var(--pa) ${Math.round(12 + (v / mx) * 78)}%,#1b1b27)` : ''}"><span>${i + 1}</span>${v ? `<small>${short(v)}</small>` : ''}</div>`; });
   return `<div class="f-heat">${cells}</div>`;
 }
+function fMonthCompare(st) {
+  const prevYm = ymAdd(F.ym, -1), prevTx = F.cache[prevYm] || [];
+  const cats = ['Food', 'Bills', 'Fun', 'Other'];
+  const totals = (tx, ym) => {
+    const out = Object.fromEntries(cats.map((c) => [c, 0]));
+    tx.forEach((t) => { if (t.date.slice(0, 7) === ym && Object.prototype.hasOwnProperty.call(out, t.cat)) out[t.cat] += t.amt; });
+    return out;
+  };
+  const cur = totals(F.tx, F.ym), prev = totals(prevTx, prevYm);
+  const max = Math.max(1, ...cats.flatMap((c) => [cur[c], prev[c]]));
+  const W = 440, Ht = 220, L = 42, R = 10, T = 24, B = 38, ph = Ht - T - B, plotW = W - L - R;
+  const groupW = plotW / cats.length, bw = Math.min(25, groupW * .27), y = (v) => T + ph - (v / max) * ph;
+  let svg = '';
+  for (let i = 0; i <= 3; i++) {
+    const v = max * (1 - i / 3), yy = T + ph * i / 3;
+    svg += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" class="h-grid-l"/><text x="${L - 7}" y="${yy + 4}" text-anchor="end" class="h-ax">${esc(short(v))}</text>`;
+  }
+  cats.forEach((c, i) => {
+    const cx = L + groupW * (i + .5), x1 = cx - bw - 2, x2 = cx + 2;
+    [[cur[c], x1, '#22d3ee', ymLabel(F.ym)], [prev[c], x2, '#8b5cf6', ymLabel(prevYm)]].forEach(([v, x, color, label]) => {
+      const yy = y(v), bh = T + ph - yy;
+      svg += `<rect x="${x.toFixed(1)}" y="${yy.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(0, bh).toFixed(1)}" rx="3" fill="${color}" fill-opacity=".88"><title>${esc(c)} · ${esc(label)} · ${money(v)}</title></rect>`;
+    });
+    svg += `<text x="${cx}" y="${Ht - 12}" text-anchor="middle" class="h-ax">${esc(c)}</text>`;
+  });
+  return `<div class="f-compare"><div class="f-compare-legend"><span><i style="background:#22d3ee"></i>${esc(ymLabel(F.ym))}</span><span><i style="background:#8b5cf6"></i>${esc(ymLabel(prevYm))}</span></div><svg viewBox="0 0 ${W} ${Ht}" role="img" aria-label="Spending by category this month compared with last month">${svg}</svg><div class="f-compare-values">${cats.map((c) => `<div><b>${c}</b><span>${money(cur[c])}</span><span>${money(prev[c])}</span></div>`).join('')}</div></div>`;
+}
 function renderFCharts(st) {
   $('f-charts').innerHTML = `
     <div class="p-card f-wide"><div class="h-ch"><h3>Daily spending</h3><span class="h-hint">bars: per day · line: running total</span></div>${fDaily(st, chartW('f-charts'))}</div>
     <div class="p-card"><div class="h-ch"><h3>Where it goes</h3><span class="h-hint">click to filter</span></div>${fDonut(st)}</div>
-    <div class="p-card"><div class="h-ch"><h3>By day of week</h3></div>${st.total ? bars(st.byDow, HD, '#22d3ee', short) : '<div class="h-empty">Nothing yet.</div>'}</div>`;
+    <div class="p-card"><div class="h-ch"><h3>This month vs last month</h3><span class="h-hint">spending by category</span></div>${fMonthCompare(st)}</div>`;
   bindFDaily();
 }
 function renderFGlance(st) { $('f-glance').innerHTML = `<div class="h-ch"><h3>Month at a glance</h3></div>${fHeat(st)}`; }
