@@ -1084,8 +1084,7 @@ function renderHStats() {
         big = fmtVal('weight', ws[li]) + '<em>lb</em>';
         if (pi >= 0) { const d = ws[li] - ws[pi]; sub = `${d > 0 ? '+' : d < 0 ? '−' : ''}${Math.abs(d).toFixed(1)} lb since 4 weeks ago`; } else sub = 'Not enough history yet';
       }
-      else if (x.k === 'card') { big = fmtVal(x.k, sum(recent)); sub = 'total, last 4 weeks'; }
-      else { big = fmtVal(x.k, avgOf(recent)) + (x.k === 'cal' ? '<em>kcal</em>' : x.k === 'pro' ? '<em>g</em>' : ''); sub = x.k === 'sleep' ? 'avg per night, last 4 weeks' : 'avg, last 4 weeks'; }
+      else { big = fmtVal(x.k, avgOf(recent)) + (x.k === 'cal' ? '<em>kcal</em>' : x.k === 'pro' ? '<em>g</em>' : ''); sub = x.k === 'sleep' ? 'avg per night, last 4 weeks' : x.k === 'card' ? 'avg per week, last 4 weeks' : 'avg, last 4 weeks'; }
     }
     return `<div class="h-stat" style="--c:${x.color}"><small>${x.name}</small><b>${big || '–'}</b><small>${sub}</small>${spark(all.slice(-12), x.color)}</div>`;
   }).join('');
@@ -1356,7 +1355,7 @@ async function showFinance(ym) {
   if (S.view === 'finance' && ym == null) { render(); return; }
   if (F.saveT) await fSaveNow();
   F.cache = {}; await loadFinance(ym || F.ym || ymNow());
-  setView('finance'); renderFinance(); fFillCache();
+  setView('finance'); renderFinance(); fFillCache(); fFillPrev();
 }
 async function loadFinance(ym) {
   F.ym = ym; F.tx = []; F.filter = ''; F.msg = ''; F.cats = ['Food', 'Bills', 'Fun', 'Other'];
@@ -1367,16 +1366,12 @@ async function loadFinance(ym) {
 }
 async function fGo(ym) {
   if (F.saveT) await fSaveNow();
-  F.cache[F.ym] = F.tx.slice(); await loadFinance(ym); renderFinance(); fFillCache();
+  F.cache[F.ym] = F.tx.slice(); await loadFinance(ym); renderFinance(); fFillCache(); fFillPrev();
 }
 async function fFillCache() {
-  const ym0 = F.ym, needed = new Set([ymAdd(F.ym, -1)]), r = avg30Range();
-  if (r) monthsBetween(r[0], r[1]).forEach((ym) => needed.add(ym));
-  let loaded = false;
-  for (const ym of needed) if (ym !== F.ym && F.cache[ym] === undefined) {
-    const t = await api.financeLoad(ym); F.cache[ym] = t ? parseF(t).tx : []; loaded = true;
-  }
-  if (loaded && S.view === 'finance' && F.ym === ym0) { renderFStats(fStats()); renderFCharts(fStats()); }
+  const r = avg30Range(); if (!r) return; const ym0 = F.ym; let loaded = false;
+  for (const ym of monthsBetween(r[0], r[1])) if (ym !== F.ym && F.cache[ym] === undefined) { const t = await api.financeLoad(ym); F.cache[ym] = t ? parseF(t).tx : []; loaded = true; }
+  if (loaded && S.view === 'finance' && F.ym === ym0) renderFStats(fStats());
 }
 function fSaveSoon() { clearTimeout(F.saveT); F.saveT = setTimeout(fSaveNow, 500); }
 async function fSaveNow() { clearTimeout(F.saveT); F.saveT = null; await api.financeSave(F.ym, toMdF()); }
@@ -1458,51 +1453,11 @@ function fHeat(st) {
   st.byDay.forEach((v, i) => { cells += `<div class="f-day${i + 1 === now ? ' now' : ''}" title="${i + 1} · ${money(v)}" style="${v ? `background:color-mix(in srgb,var(--pa) ${Math.round(12 + (v / mx) * 78)}%,#1b1b27)` : ''}"><span>${i + 1}</span>${v ? `<small>${short(v)}</small>` : ''}</div>`; });
   return `<div class="f-heat">${cells}</div>`;
 }
-function fMonthCompare(st) {
-  const prevYm = ymAdd(F.ym, -1), prevTx = F.cache[prevYm] || [];
-  const cats = ['Food', 'Bills', 'Fun', 'Other'];
-  const totals = (tx, ym) => {
-    const out = Object.fromEntries(cats.map((c) => [c, 0]));
-    tx.forEach((t) => { if (t.date.slice(0, 7) === ym && Object.prototype.hasOwnProperty.call(out, t.cat)) out[t.cat] += t.amt; });
-    return out;
-  };
-  const cur = totals(F.tx, F.ym), prev = totals(prevTx, prevYm);
-  const max = Math.max(1, ...cats.flatMap((c) => [cur[c], prev[c]]));
-  // Horizontal paired bars use the full card width and keep category/value labels
-  // close to their bars, avoiding the cramped mini-table beneath a narrow plot.
-  const W = 500, Ht = 248, L = 78, R = 64, T = 12, B = 12;
-  const plotW = W - L - R, rowH = (Ht - T - B) / cats.length;
-  const barH = 13, gap = 4, x = (v) => L + (v / max) * plotW;
-  let svg = '';
-  for (let i = 0; i <= 4; i++) {
-    const v = max * i / 4, xx = L + plotW * i / 4;
-    svg += `<line x1="${xx}" x2="${xx}" y1="${T - 2}" y2="${Ht - B}" class="h-grid-l"/>`;
-    svg += `<text x="${xx}" y="${Ht - 1}" text-anchor="middle" class="h-ax">${esc(short(v))}</text>`;
-  }
-  cats.forEach((c, i) => {
-    const cy = T + rowH * (i + .5);
-    const values = [[cur[c], '#22d3ee', ymLabel(F.ym)], [prev[c], '#8b5cf6', ymLabel(prevYm)]];
-    svg += `<text x="${L - 10}" y="${cy + 4}" text-anchor="end" class="h-ax" style="fill:var(--text);font-size:12px">${esc(c)}</text>`;
-    values.forEach(([v, color, label], j) => {
-      const yy = cy - barH - gap / 2 + j * (barH + gap);
-      const width = Math.max(v > 0 ? 2 : 0, (v / max) * plotW);
-      svg += `<rect x="${L}" y="${yy}" width="${width.toFixed(1)}" height="${barH}" rx="4" fill="${color}" fill-opacity=".9"><title>${esc(c)} · ${esc(label)} · ${money(v)}</title></rect>`;
-      const valueX = Math.min(W - 3, x(v) + 6);
-      const anchor = valueX > W - R + 2 ? 'end' : 'start';
-      const labelX = anchor === 'end' ? W - 3 : valueX;
-      svg += `<text x="${labelX}" y="${yy + barH - 2}" text-anchor="${anchor}" class="h-ax" style="font-size:10px;fill:var(--text)">${esc(money(v))}</text>`;
-    });
-    if (i < cats.length - 1) {
-      svg += `<line x1="${L - 4}" x2="${W - 2}" y1="${T + rowH * (i + 1)}" y2="${T + rowH * (i + 1)}" stroke="var(--line)" stroke-opacity=".45"/>`;
-    }
-  });
-  return `<div class="f-compare"><div class="f-compare-legend"><span><i style="background:#22d3ee"></i>${esc(ymLabel(F.ym))}</span><span><i style="background:#8b5cf6"></i>${esc(ymLabel(prevYm))}</span></div><svg viewBox="0 0 ${W} ${Ht}" role="img" aria-label="Spending by category this month compared with last month">${svg}</svg></div>`;
-}
 function renderFCharts(st) {
   $('f-charts').innerHTML = `
     <div class="p-card f-wide"><div class="h-ch"><h3>Daily spending</h3><span class="h-hint">bars: per day · line: running total</span></div>${fDaily(st, chartW('f-charts'))}</div>
     <div class="p-card"><div class="h-ch"><h3>Where it goes</h3><span class="h-hint">click to filter</span></div>${fDonut(st)}</div>
-    <div class="p-card"><div class="h-ch"><h3>This month vs last month</h3><span class="h-hint">spending by category</span></div>${fMonthCompare(st)}</div>`;
+    <div class="p-card" id="f-c-cmp">${cmpInner(st)}</div>`;
   bindFDaily();
 }
 function renderFGlance(st) { $('f-glance').innerHTML = `<div class="h-ch"><h3>Month at a glance</h3></div>${fHeat(st)}`; }
@@ -1760,4 +1715,40 @@ function updTally() {
   if (!P.cfg.tally || !S.tasks) { el.hidden = true; return; }
   const mp = mullProgress(); el.hidden = false; el.textContent = `Tasks complete: ${mp.done}/${mp.tot}`;
   el.classList.toggle('all', mp.tot > 0 && mp.done === mp.tot);
+}
+
+/* cmp:start */
+const mshort = (ym) => new Date(+ym.slice(0, 4), +ym.slice(5) - 1, 1).toLocaleDateString('en', { month: 'short' });
+function cmpData(st) {
+  const tx = F.cache[ymAdd(F.ym, -1)]; if (tx === undefined) return null;
+  const prev = {}; let pt = 0; tx.forEach((t) => { prev[t.cat] = (prev[t.cat] || 0) + t.amt; pt += t.amt; });
+  const cats = [...F.cats]; [...Object.keys(st.byCat), ...Object.keys(prev)].forEach((c) => { if (!cats.includes(c)) cats.push(c); });
+  return { prev, pt, cats };
+}
+function fCompare(st) {
+  const d = cmpData(st); if (!d) return '<div class="h-empty">Loading last month…</div>';
+  if (!st.total && !d.pt) return '<div class="h-empty">No spending in either month yet.</div>';
+  const W = 560, Ht = 250, L = 46, R = 8, T = 10, B = 50, pw = W - L - R, ph = Ht - T - B, n = d.cats.length, gw = pw / n, bw = Math.min(30, gw * 0.3), base = T + ph;
+  const mx = Math.max(1, ...d.cats.flatMap((c) => [st.byCat[c] || 0, d.prev[c] || 0])), pm = mshort(ymAdd(F.ym, -1)), cm = mshort(F.ym);
+  let s = '';
+  for (let g = 0; g <= 2; g++) { const y = T + (g / 2) * ph; s += `<line x1="${L}" x2="${W - R}" y1="${y}" y2="${y}" class="h-grid-l"/><text x="${L - 6}" y="${y + 4}" text-anchor="end" class="h-ax">${short(mx * (1 - g / 2))}</text>`; }
+  d.cats.forEach((c, i) => {
+    const cx = L + gw * i + gw / 2, pv = d.prev[c] || 0, cv = st.byCat[c] || 0, col = fcol(c), ph1 = (pv / mx) * ph, ph2 = (cv / mx) * ph, diff = cv - pv;
+    if (pv > 0) s += `<rect x="${(cx - bw - 2).toFixed(1)}" y="${(base - ph1).toFixed(1)}" width="${bw.toFixed(1)}" height="${ph1.toFixed(1)}" rx="3" fill="${col}" fill-opacity=".28" stroke="${col}" stroke-opacity=".7"><title>${esc(c)} · ${pm} ${money(pv)}</title></rect>`;
+    if (cv > 0) s += `<rect x="${(cx + 2).toFixed(1)}" y="${(base - ph2).toFixed(1)}" width="${bw.toFixed(1)}" height="${ph2.toFixed(1)}" rx="3" fill="${col}" style="filter:drop-shadow(0 0 5px ${col}88)"><title>${esc(c)} · ${cm} ${money(cv)}</title></rect>`;
+    const label = c.length > 11 ? c.slice(0, 10) + '…' : c, dt = pv === 0 && cv === 0 ? '' : pv === 0 ? 'new' : `${diff >= 0 ? '+' : '−'}${short(Math.abs(diff))}`;
+    s += `<text x="${cx.toFixed(1)}" y="${Ht - 26}" text-anchor="middle" class="h-ax" style="fill:#c9cbd8">${esc(label)}</text><text x="${cx.toFixed(1)}" y="${Ht - 8}" text-anchor="middle" class="h-ax" style="fill:${diff > 0 || pv === 0 ? '#fb7185' : diff < 0 ? '#34d399' : '#7a7d92'};font-weight:600">${dt}</text>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${Ht}" class="h-svg">${s}</svg>`;
+}
+function cmpInner(st) {
+  const d = cmpData(st), pm = mshort(ymAdd(F.ym, -1)), cm = mshort(F.ym), pct = d && d.pt ? Math.round((st.total - d.pt) / d.pt * 100) : null;
+  const foot = d && (st.total || d.pt) ? `<div class="f-cmpfoot">${cm} ${money(st.total)} vs ${pm} ${money(d.pt)}${pct == null ? '' : ` · <b style="color:${pct > 0 ? '#fb7185' : pct < 0 ? '#34d399' : 'var(--dim)'}">${pct >= 0 ? '+' : '−'}${Math.abs(pct)}%</b>`}</div>` : '';
+  return `<div class="h-ch"><h3>This month vs last month</h3><span class="h-hint">faded: ${pm} · solid: ${cm}</span></div>${fCompare(st)}${foot}`;
+}
+/* cmp:end */
+async function fFillPrev() {
+  const p = ymAdd(F.ym, -1), ym0 = F.ym;
+  if (F.cache[p] === undefined) { const t = await api.financeLoad(p); F.cache[p] = t ? parseF(t).tx : []; }
+  if (S.view === 'finance' && F.ym === ym0) { const c = $('f-c-cmp'); if (c) c.innerHTML = cmpInner(fStats()); }
 }
