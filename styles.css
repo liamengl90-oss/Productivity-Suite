@@ -397,7 +397,7 @@ body.g-drag{cursor:grabbing;user-select:none}
 .f-charts{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
 .f-wide{grid-column:1/-1}
 .f-compare{min-width:0}
-.f-compare-legend{display:flex;gap:16px;flex-wrap:wrap;margin:2px 0 4px 42px;color:var(--dim);font-size:11px}
+.f-compare-legend{display:flex;gap:16px;flex-wrap:wrap;margin:2px 0 4px 78px;color:var(--dim);font-size:11px}
 .f-compare-legend span{display:flex;align-items:center;gap:6px}
 .f-compare-legend i{width:8px;height:8px;border-radius:2px;display:inline-block}
 .f-compare svg{display:block;width:100%;height:auto;overflow:visible}

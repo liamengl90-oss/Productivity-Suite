@@ -1468,22 +1468,35 @@ function fMonthCompare(st) {
   };
   const cur = totals(F.tx, F.ym), prev = totals(prevTx, prevYm);
   const max = Math.max(1, ...cats.flatMap((c) => [cur[c], prev[c]]));
-  const W = 440, Ht = 220, L = 42, R = 10, T = 24, B = 38, ph = Ht - T - B, plotW = W - L - R;
-  const groupW = plotW / cats.length, bw = Math.min(25, groupW * .27), y = (v) => T + ph - (v / max) * ph;
+  // Horizontal paired bars use the full card width and keep category/value labels
+  // close to their bars, avoiding the cramped mini-table beneath a narrow plot.
+  const W = 500, Ht = 248, L = 78, R = 64, T = 12, B = 12;
+  const plotW = W - L - R, rowH = (Ht - T - B) / cats.length;
+  const barH = 13, gap = 4, x = (v) => L + (v / max) * plotW;
   let svg = '';
-  for (let i = 0; i <= 3; i++) {
-    const v = max * (1 - i / 3), yy = T + ph * i / 3;
-    svg += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" class="h-grid-l"/><text x="${L - 7}" y="${yy + 4}" text-anchor="end" class="h-ax">${esc(short(v))}</text>`;
+  for (let i = 0; i <= 4; i++) {
+    const v = max * i / 4, xx = L + plotW * i / 4;
+    svg += `<line x1="${xx}" x2="${xx}" y1="${T - 2}" y2="${Ht - B}" class="h-grid-l"/>`;
+    svg += `<text x="${xx}" y="${Ht - 1}" text-anchor="middle" class="h-ax">${esc(short(v))}</text>`;
   }
   cats.forEach((c, i) => {
-    const cx = L + groupW * (i + .5), x1 = cx - bw - 2, x2 = cx + 2;
-    [[cur[c], x1, '#22d3ee', ymLabel(F.ym)], [prev[c], x2, '#8b5cf6', ymLabel(prevYm)]].forEach(([v, x, color, label]) => {
-      const yy = y(v), bh = T + ph - yy;
-      svg += `<rect x="${x.toFixed(1)}" y="${yy.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(0, bh).toFixed(1)}" rx="3" fill="${color}" fill-opacity=".88"><title>${esc(c)} · ${esc(label)} · ${money(v)}</title></rect>`;
+    const cy = T + rowH * (i + .5);
+    const values = [[cur[c], '#22d3ee', ymLabel(F.ym)], [prev[c], '#8b5cf6', ymLabel(prevYm)]];
+    svg += `<text x="${L - 10}" y="${cy + 4}" text-anchor="end" class="h-ax" style="fill:var(--text);font-size:12px">${esc(c)}</text>`;
+    values.forEach(([v, color, label], j) => {
+      const yy = cy - barH - gap / 2 + j * (barH + gap);
+      const width = Math.max(v > 0 ? 2 : 0, (v / max) * plotW);
+      svg += `<rect x="${L}" y="${yy}" width="${width.toFixed(1)}" height="${barH}" rx="4" fill="${color}" fill-opacity=".9"><title>${esc(c)} · ${esc(label)} · ${money(v)}</title></rect>`;
+      const valueX = Math.min(W - 3, x(v) + 6);
+      const anchor = valueX > W - R + 2 ? 'end' : 'start';
+      const labelX = anchor === 'end' ? W - 3 : valueX;
+      svg += `<text x="${labelX}" y="${yy + barH - 2}" text-anchor="${anchor}" class="h-ax" style="font-size:10px;fill:var(--text)">${esc(money(v))}</text>`;
     });
-    svg += `<text x="${cx}" y="${Ht - 12}" text-anchor="middle" class="h-ax">${esc(c)}</text>`;
+    if (i < cats.length - 1) {
+      svg += `<line x1="${L - 4}" x2="${W - 2}" y1="${T + rowH * (i + 1)}" y2="${T + rowH * (i + 1)}" stroke="var(--line)" stroke-opacity=".45"/>`;
+    }
   });
-  return `<div class="f-compare"><div class="f-compare-legend"><span><i style="background:#22d3ee"></i>${esc(ymLabel(F.ym))}</span><span><i style="background:#8b5cf6"></i>${esc(ymLabel(prevYm))}</span></div><svg viewBox="0 0 ${W} ${Ht}" role="img" aria-label="Spending by category this month compared with last month">${svg}</svg><div class="f-compare-values">${cats.map((c) => `<div><b>${c}</b><span>${money(cur[c])}</span><span>${money(prev[c])}</span></div>`).join('')}</div></div>`;
+  return `<div class="f-compare"><div class="f-compare-legend"><span><i style="background:#22d3ee"></i>${esc(ymLabel(F.ym))}</span><span><i style="background:#8b5cf6"></i>${esc(ymLabel(prevYm))}</span></div><svg viewBox="0 0 ${W} ${Ht}" role="img" aria-label="Spending by category this month compared with last month">${svg}</svg></div>`;
 }
 function renderFCharts(st) {
   $('f-charts').innerHTML = `
